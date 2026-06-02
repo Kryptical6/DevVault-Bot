@@ -97,7 +97,7 @@ export async function handlePostCategorySelect(userId: string, category: 'FH' | 
           'You need an active Marketplace Subscription to sell assets on DevVault.\n\nSubscribe via Patreon to get access, then use `/get-seller` if your role is not assigned automatically.'
         )],
         components: [new ARB<InstanceType<typeof BB>>().addComponents(
-          new BB().setLabel('Subscribe on Patreon').setStyle(BS.Link).setURL('https://patreon.com/DevVault?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink')
+          new BB().setLabel('Subscribe on Patreon').setStyle(BS.Link).setURL('https://www.patreon.com/16114810/join')
         )],
       });
       return;
@@ -137,7 +137,7 @@ async function handlePostStep(
 
   if (type === 'FH') {
     switch (step) {
-      case 2:  data.title     = content.slice(0, 70); await next(userId, 3, data); await ask(dm, 'About Me', 'Write a short about me — your experience and what you offer. (max 200 characters)'); break;
+      case 2:  data.title     = content.slice(0, 70); await next(userId, 3, data); await ask(dm, 'About Me', 'Write a short about me: your experience and what you offer. (max 200 characters)'); break;
       case 3:  data.aboutMe   = content.slice(0, 200); await next(userId, 4, data); await ask(dm, 'Portfolio Link', 'Drop your portfolio link.'); break;
       case 4:  data.portfolio = content; await next(userId, 5, data); await ask(dm, 'Showcase Image', 'Upload a showcase image of your best work. (type **skip** to skip)'); break;
       case 5:  data.image     = message.attachments.size > 0 ? message.attachments.first()!.url : null; await next(userId, 6, data); await ask(dm, 'Rates', 'What are your rates? Include your pricing structure (hourly / per task / fixed).'); break;

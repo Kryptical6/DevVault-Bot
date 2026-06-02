@@ -52,7 +52,7 @@ async function buildMeta(userId: string, isApp = false): Promise<ReviewMeta> {
         const member = await guild.members.fetch(userId).catch(() => null);
         if (member?.joinedTimestamp) {
           const joinDays = Math.floor((Date.now() - member.joinedTimestamp) / 86_400_000);
-          accountAge += ` | Joined ${joinDays}d ago`;
+      accountAge += `, joined ${joinDays}d ago`;
         }
       } catch { /* ignore */ }
     }

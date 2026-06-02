@@ -60,7 +60,7 @@ export async function handleCreateTicket(
   await channel.send({
     embeds: [new EmbedBuilder()
       .setColor(config.colours.system)
-      .setTitle(`${typeLabel[ticketType]} Ticket — ${ticket.ticket_id}`)
+      .setTitle(`${typeLabel[ticketType]} Ticket | ${ticket.ticket_id}`)
       .addFields([
         { name: 'User',   value: `${user.tag} (<@${userId}>)`, inline: true },
         { name: 'Type',   value: typeLabel[ticketType],        inline: true },
@@ -188,29 +188,36 @@ export async function handleTicketClose(interaction: ButtonInteraction, ticketId
     await (interaction.channel as TextChannel).setName(`closed-${shortId}`);
   } catch { /* rate limited */ }
 
-  // Build and send HTML transcript
+  // Build HTML transcript, send to ticket log channel, post closure notice in channel
   try {
     const messages = await getTicketMessages(ticketId);
     const html = buildTicketTranscriptHtml(ticketId, userTag, ticket.ticket_type, messages);
     const buf = Buffer.from(html, 'utf-8');
     const attachment = new AttachmentBuilder(buf, { name: `transcript-${ticketId}.html` });
 
+    // Post closure notice + transcript in the ticket channel
     await (interaction.channel as TextChannel).send({
-      embeds: [buildInfoEmbed('Ticket Closed', `Closed by <@${interaction.user.id}>. Transcript attached.`)],
+      embeds: [buildInfoEmbed('Ticket Closed', `Closed by <@${interaction.user.id}>.`)],
       files: [attachment],
     });
 
-    // DM transcript to user
+    // Send transcript to ticket log channel
     try {
-      const closedUser = await ticketClient.users.fetch(ticket.user_id);
-      await closedUser.send({
-        embeds: [buildInfoEmbed('Ticket Closed', `Your ticket (${ticketId}) has been closed. A full transcript is attached.`)],
+      const logChannel = await ticketClient.channels.fetch(config.channels.staff.logs.ticket) as TextChannel;
+      await logChannel.send({
+        embeds: [buildInfoEmbed('Ticket Transcript', `Ticket **${ticketId}** closed by <@${interaction.user.id}>. User: ${userTag}.`)],
         files: [new AttachmentBuilder(buf, { name: `transcript-${ticketId}.html` })],
       });
-    } catch { /* DMs off */ }
+    } catch { /* log channel error */ }
   } catch { /* DB error, skip transcript */ }
 
   await logTicket({ action: 'Closed', ticketId, userId: ticket.user_id, userTag, type: ticket.ticket_type, staffId: interaction.user.id });
+
+  // DM user to let them know the ticket was closed
+  try {
+    const closedUser = await ticketClient.users.fetch(ticket.user_id);
+    await closedUser.send({ embeds: [buildInfoEmbed('Ticket Closed', `Your ticket (${ticketId}) has been closed.`)] });
+  } catch { /* DMs off */ }
 
   // Delete channel after 10 seconds
   setTimeout(async () => {

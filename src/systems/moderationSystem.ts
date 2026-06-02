@@ -152,7 +152,7 @@ export async function handleBan(interaction: ChatInputCommandInteraction): Promi
   await interaction.showModal(
     new ModalBuilder().setCustomId(`ban_modal_${target.id}`).setTitle('Ban User').addComponents(
       new ActionRowBuilder<ModalActionRowComponentBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('duration').setLabel('Duration (e.g. 7d, 30d — or 0 for permanent)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(10)
+        new TextInputBuilder().setCustomId('duration').setLabel('Duration (e.g. 7d, 30d, or 0 for permanent)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(10)
       ),
       new ActionRowBuilder<ModalActionRowComponentBuilder>().addComponents(
         new TextInputBuilder().setCustomId('reason').setLabel('Reason').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(500)

@@ -51,7 +51,7 @@ const commands = [
     .addStringOption(o => o.setName('note').setDescription('Note to add (leave blank to view existing notes)').setRequired(false)),
   new SlashCommandBuilder().setName('marketplace-mute').setDescription('Restrict a user from marketplace features')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
-    .addStringOption(o => o.setName('duration').setDescription('Duration e.g. 7d, 30d — or 0 for permanent').setRequired(true))
+    .addStringOption(o => o.setName('duration').setDescription('Duration e.g. 7d, 30d, or 0 for permanent').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('Reason for the restriction').setRequired(true)),
   new SlashCommandBuilder().setName('marketplace-unmute').setDescription('Remove a marketplace restriction from a user')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
@@ -103,23 +103,27 @@ function isMpStaff(member: GuildMember): boolean {
 export async function handleCommand(interaction: ChatInputCommandInteraction, client: Client): Promise<void> {
   const cmd = interaction.commandName;
 
-  // Block all commands in DMs — slash commands only work in servers anyway,
-  // but belt-and-suspenders in case a DM interaction somehow reaches here
+  // DM-redirect commands must be checked before the guild guard.
+  // They are run from server channels and redirect the user to DMs.
+  const dmCommands = ['post', 'repost', 'browse', 'apply', 'ticket', 'get-seller', 'analytics', 'saved'];
+  if (dmCommands.includes(cmd)) {
+    if (!interaction.guild) {
+      await interaction.reply({ embeds: [buildErrorEmbed('Server Only', 'Please use this command in the DevVault server.')], ephemeral: true });
+      return;
+    }
+    await interaction.reply({ embeds: [buildInfoEmbed('Check your DMs', "Head to your DMs to continue. I've sent you a message.")], ephemeral: true });
+    const { routeDmCommand } = await import('../workflows/postWorkflow.js');
+    await routeDmCommand(interaction.user, cmd, client);
+    return;
+  }
+
+  // All other commands require a server context
   if (!interaction.guild) {
     await interaction.reply({ embeds: [buildErrorEmbed('Server Only', 'This command can only be used in a server.')], ephemeral: true });
     return;
   }
 
   const member = interaction.member as GuildMember;
-
-  // ── DM-REDIRECT COMMANDS ───────────────────────────────────────────────────
-  const dmCommands = ['post', 'repost', 'browse', 'apply', 'ticket', 'get-seller', 'analytics', 'saved'];
-  if (dmCommands.includes(cmd)) {
-    await interaction.reply({ embeds: [buildInfoEmbed('Check your DMs', "Head to your DMs to continue — I've sent you a message.")], ephemeral: true });
-    const { routeDmCommand } = await import('../workflows/postWorkflow.js');
-    await routeDmCommand(interaction.user, cmd, client);
-    return;
-  }
 
   // ── USER COMMANDS (server only) ────────────────────────────────────────────
   if (cmd === 'mylogs') {
@@ -196,7 +200,7 @@ async function handleMpNotes(interaction: ChatInputCommandInteraction): Promise<
       return;
     }
     const lines = notes.map(n =>
-      `<t:${Math.floor(new Date(n.created_at).getTime() / 1000)}:d> — <@${n.added_by}>: ${n.note_text}`
+      `<t:${Math.floor(new Date(n.created_at).getTime() / 1000)}:d> by <@${n.added_by}>: ${n.note_text}`
     ).join('\n');
     await interaction.editReply({
       embeds: [new EmbedBuilder()
