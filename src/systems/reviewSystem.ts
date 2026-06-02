@@ -180,6 +180,12 @@ export async function handleReviewApprove(interaction: ButtonInteraction, target
 
   await interaction.message.delete().catch(() => null);
 
+  // Delete any proof thread attached to this review message
+  try {
+    const threads = interaction.message.thread;
+    if (threads) await threads.delete();
+  } catch { /* no thread or already gone */ }
+
   try {
     const user = await reviewClient.users.fetch(post.user_id);
     await user.send({
@@ -291,6 +297,13 @@ async function executeDeny(
   }
 
   await interaction.message?.delete().catch(() => null);
+
+  // Delete any proof thread attached to this review message
+  try {
+    const thread = interaction.message?.thread;
+    if (thread) await thread.delete();
+  } catch { /* no thread or already gone */ }
+
   await logPost({ action: `${isApp ? 'Application ' : ''}Denied`, postId: targetId, userId, username: userId, actionedBy: interaction.user.id, reason: formatted });
   await interaction.editReply({ embeds: [buildSuccessEmbed('Denied', `${targetId} denied.`)] }).catch(() => null);
 }
@@ -395,7 +408,7 @@ export async function handleProofSubmitModal(interaction: ModalSubmitInteraction
     } catch { /* ignore */ }
   }
 
-  await logPost({ action: `Proof ${proofType} Submitted`, postId: targetId, userId: interaction.user.id, username: interaction.user.tag });
+  await logPost({ action: `Proof ${proofType} Submitted`, postId: targetId, userId: interaction.user.id, username: interaction.user.tag, extra: `Link: ${proofLink}` });
   await interaction.editReply({ embeds: [buildSuccessEmbed('Proof Submitted', 'Your proof has been submitted and is under review.')] });
 }
 

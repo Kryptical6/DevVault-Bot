@@ -64,6 +64,8 @@ const commands = [
     .addStringOption(o => o.setName('post_id').setDescription('Post ID to delete directly (e.g. FH-0001)').setRequired(false))
     .addUserOption(o => o.setName('user').setDescription('Select a user to pick from their posts').setRequired(false)),
   new SlashCommandBuilder().setName('embed').setDescription('Send a custom embed to a channel (Admin only)'),
+  new SlashCommandBuilder().setName('get-delivery').setDescription('Retrieve the private delivery link for an asset post (Admin only, logged)')
+    .addStringOption(o => o.setName('post_id').setDescription('Asset post ID e.g. ASSET-0001').setRequired(true)),
   new SlashCommandBuilder().setName('audit-log').setDescription('View system audit log (Admin only)'),
 ].map(c => c.toJSON());
 
@@ -166,7 +168,7 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, cl
   }
 
   // ── ADMIN COMMANDS ────────────────────────────────────────────────────────
-  if (['grant-trusted-seller', 'audit-log', 'embed'].includes(cmd)) {
+  if (['grant-trusted-seller', 'audit-log', 'embed', 'get-delivery'].includes(cmd)) {
     if (!isAdmin(member)) {
       await interaction.reply({ embeds: [buildErrorEmbed('No Permission', 'This command requires Admin.')], ephemeral: true });
       return;
@@ -175,6 +177,7 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, cl
       case 'grant-trusted-seller': await handleGrantTrustedSeller(interaction); break;
       case 'audit-log':            await handleAuditLog(interaction);            break;
       case 'embed':                await handleEmbed(interaction, client);       break;
+      case 'get-delivery':         await handleGetDelivery(interaction);         break;
     }
     return;
   }
@@ -314,6 +317,56 @@ async function handleAuditLog(interaction: ChatInputCommandInteraction): Promise
   ).join('\n');
   await interaction.editReply({
     embeds: [new EmbedBuilder().setColor(config.colours.system).setTitle('Audit Log').setDescription(lines.slice(0, 4000)).setFooter({ text: 'DevVault' })]
+  });
+}
+
+// ─── /get-delivery ──────────────────────────────────────────────────────────
+
+async function handleGetDelivery(interaction: ChatInputCommandInteraction): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const postIdRaw = interaction.options.getString('post_id', true).toUpperCase();
+
+  const { getPost } = await import('../db/helpers.js');
+  const { logMisc } = await import('../utils/logger.js');
+  const { query } = await import('../db/index.js');
+
+  const post = await getPost(postIdRaw);
+
+  if (!post) {
+    await interaction.editReply({ embeds: [buildErrorEmbed('Not Found', `No post found with ID ${postIdRaw}.`)] });
+    return;
+  }
+
+  if (post.post_type !== 'ASSET') {
+    await interaction.editReply({ embeds: [buildErrorEmbed('Not an Asset', `${postIdRaw} is a ${post.post_type} post. Delivery links only exist on asset posts.`)] });
+    return;
+  }
+
+  if (!post.asset_delivery) {
+    await interaction.editReply({ embeds: [buildErrorEmbed('No Delivery Link', `${postIdRaw} does not have a stored delivery link.`)] });
+    return;
+  }
+
+  // Log every access
+  await query(
+    `INSERT INTO audit_log (event_type, detail) VALUES ($1, $2)`,
+    ['delivery_link_accessed', `Admin ${interaction.user.tag} (${interaction.user.id}) accessed delivery link for ${postIdRaw}`]
+  );
+  await logMisc('delivery_link_accessed', `${interaction.user.tag} accessed delivery for ${postIdRaw}`);
+
+  await interaction.editReply({
+    embeds: [new EmbedBuilder()
+      .setColor(config.colours.system)
+      .setTitle(`Delivery Link: ${postIdRaw}`)
+      .addFields(
+        { name: 'Post', value: post.title, inline: true },
+        { name: 'Seller', value: `<@${post.user_id}>`, inline: true },
+        { name: 'Status', value: post.status, inline: true },
+        { name: 'Delivery', value: post.asset_delivery, inline: false },
+      )
+      .setFooter({ text: `Accessed by ${interaction.user.tag} - this access has been logged` })
+      .setTimestamp()
+    ],
   });
 }
 
