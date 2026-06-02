@@ -25,15 +25,15 @@ export async function initDb(): Promise<void> {
 
   await query(`
     CREATE TABLE IF NOT EXISTS users (
-      user_id                   TEXT PRIMARY KEY,
-      username                  TEXT NOT NULL DEFAULT '',
-      joined_at                 TIMESTAMPTZ,
-      marketplace_muted         BOOLEAN DEFAULT FALSE,
+      user_id                     TEXT PRIMARY KEY,
+      username                    TEXT NOT NULL DEFAULT '',
+      joined_at                   TIMESTAMPTZ,
+      marketplace_muted           BOOLEAN DEFAULT FALSE,
       marketplace_mute_expires_at TIMESTAMPTZ,
-      active_ban                BOOLEAN DEFAULT FALSE,
-      ban_expires_at            TIMESTAMPTZ,
-      warn_count                INT DEFAULT 0,
-      created_at                TIMESTAMPTZ DEFAULT NOW()
+      active_ban                  BOOLEAN DEFAULT FALSE,
+      ban_expires_at              TIMESTAMPTZ,
+      warn_count                  INT DEFAULT 0,
+      created_at                  TIMESTAMPTZ DEFAULT NOW()
     )`);
 
   await query(`
@@ -44,7 +44,7 @@ export async function initDb(): Promise<void> {
 
   await query(`
     INSERT INTO post_sequences (type, last_seq)
-    VALUES ('FH',0),('LFD',0),('ASSET',0),('APP',0)
+    VALUES ('FH',0),('LFD',0),('ASSET',0),('APP',0),('TKT',0)
     ON CONFLICT (type) DO NOTHING`);
 
   await query(`
@@ -84,16 +84,16 @@ export async function initDb(): Promise<void> {
 
   await query(`
     CREATE TABLE IF NOT EXISTS applications (
-      application_id TEXT PRIMARY KEY,
-      user_id        TEXT REFERENCES users(user_id),
-      skill_type     TEXT NOT NULL,
-      portfolio_link TEXT NOT NULL,
-      status         TEXT NOT NULL DEFAULT 'pending',
-      denial_reasons JSONB,
+      application_id   TEXT PRIMARY KEY,
+      user_id          TEXT REFERENCES users(user_id),
+      skill_type       TEXT NOT NULL,
+      portfolio_link   TEXT NOT NULL,
+      status           TEXT NOT NULL DEFAULT 'pending',
+      denial_reasons   JSONB,
       staff_message_id TEXT,
-      created_at     TIMESTAMPTZ DEFAULT NOW(),
-      actioned_at    TIMESTAMPTZ,
-      actioned_by    TEXT
+      created_at       TIMESTAMPTZ DEFAULT NOW(),
+      actioned_at      TIMESTAMPTZ,
+      actioned_by      TEXT
     )`);
 
   await query(`
@@ -109,20 +109,32 @@ export async function initDb(): Promise<void> {
     )`);
 
   await query(`
+    CREATE TABLE IF NOT EXISTS ticket_messages (
+      id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      ticket_id   TEXT REFERENCES tickets(ticket_id),
+      sender_id   TEXT NOT NULL,
+      sender_tag  TEXT NOT NULL,
+      direction   TEXT NOT NULL,
+      content     TEXT,
+      attachments JSONB,
+      sent_at     TIMESTAMPTZ DEFAULT NOW()
+    )`);
+
+  await query(`
     CREATE TABLE IF NOT EXISTS moderation (
-      entry_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id       TEXT REFERENCES users(user_id),
-      action_type   TEXT NOT NULL,
-      reason        TEXT NOT NULL,
-      evidence      TEXT,
-      duration_days INT,
-      moderator_id  TEXT NOT NULL,
-      moderator_tag TEXT NOT NULL DEFAULT '',
-      created_at    TIMESTAMPTZ DEFAULT NOW(),
-      expires_at    TIMESTAMPTZ,
-      is_active     BOOLEAN DEFAULT TRUE,
-      removed_early BOOLEAN DEFAULT FALSE,
-      removed_by    TEXT,
+      entry_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id        TEXT REFERENCES users(user_id),
+      action_type    TEXT NOT NULL,
+      reason         TEXT NOT NULL,
+      evidence       TEXT,
+      duration_days  INT,
+      moderator_id   TEXT NOT NULL,
+      moderator_tag  TEXT NOT NULL DEFAULT '',
+      created_at     TIMESTAMPTZ DEFAULT NOW(),
+      expires_at     TIMESTAMPTZ,
+      is_active      BOOLEAN DEFAULT TRUE,
+      removed_early  BOOLEAN DEFAULT FALSE,
+      removed_by     TEXT,
       removed_reason TEXT
     )`);
 
@@ -137,17 +149,17 @@ export async function initDb(): Promise<void> {
 
   await query(`
     CREATE TABLE IF NOT EXISTS proof_requests (
-      proof_id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      target_id        TEXT NOT NULL,
-      target_type      TEXT NOT NULL,
-      proof_type       TEXT NOT NULL,
-      requested_by     TEXT NOT NULL,
-      requested_at     TIMESTAMPTZ DEFAULT NOW(),
-      deadline_at      TIMESTAMPTZ NOT NULL,
-      submitted_at     TIMESTAMPTZ,
-      proof_ref        TEXT,
-      status           TEXT NOT NULL DEFAULT 'pending',
-      thread_id        TEXT,
+      proof_id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      target_id         TEXT NOT NULL,
+      target_type       TEXT NOT NULL,
+      proof_type        TEXT NOT NULL,
+      requested_by      TEXT NOT NULL,
+      requested_at      TIMESTAMPTZ DEFAULT NOW(),
+      deadline_at       TIMESTAMPTZ NOT NULL,
+      submitted_at      TIMESTAMPTZ,
+      proof_ref         TEXT,
+      status            TEXT NOT NULL DEFAULT 'pending',
+      thread_id         TEXT,
       review_message_id TEXT
     )`);
 
@@ -189,14 +201,14 @@ export async function initDb(): Promise<void> {
 
   await query(`
     CREATE TABLE IF NOT EXISTS featured_queue (
-      id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      post_id            TEXT REFERENCES posts(post_id),
-      seller_tier        TEXT NOT NULL DEFAULT 'standard',
-      queued_at          TIMESTAMPTZ DEFAULT NOW(),
-      started_at         TIMESTAMPTZ,
-      expires_at         TIMESTAMPTZ,
+      id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      post_id             TEXT REFERENCES posts(post_id),
+      seller_tier         TEXT NOT NULL DEFAULT 'standard',
+      queued_at           TIMESTAMPTZ DEFAULT NOW(),
+      started_at          TIMESTAMPTZ,
+      expires_at          TIMESTAMPTZ,
       featured_message_id TEXT,
-      status             TEXT DEFAULT 'queued'
+      status              TEXT DEFAULT 'queued'
     )`);
 
   await query(`
@@ -226,4 +238,11 @@ export async function nextPostId(type: 'FH' | 'LFD' | 'ASSET' | 'APP'): Promise<
     [type]
   );
   return `${type}-${String(res.rows[0].last_seq).padStart(4, '0')}`;
+}
+
+export async function nextTicketId(): Promise<string> {
+  const res = await query(
+    `UPDATE post_sequences SET last_seq = last_seq + 1 WHERE type = 'TKT' RETURNING last_seq`
+  );
+  return `TKT-${String(res.rows[0].last_seq).padStart(4, '0')}`;
 }

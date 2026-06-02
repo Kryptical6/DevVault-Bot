@@ -7,7 +7,7 @@ import { config } from './config/index.js';
 import { initDb } from './db/index.js';
 import { setLogClient } from './utils/logger.js';
 import { registerCommands, handleCommand } from './commands/index.js';
-import { routeInteraction, routeDMMessage } from './events/interactionRouter.js';
+import { routeInteraction, routeDMMessage, routeServerMessage } from './events/interactionRouter.js';
 import { setPostWorkflowClient } from './workflows/postWorkflow.js';
 import { setTicketClient, mirrorToUser } from './systems/ticketSystem.js';
 import { setReviewClient } from './systems/reviewSystem.js';
@@ -94,6 +94,8 @@ client.on(Events.MessageCreate, async (message) => {
     if (message.guild?.id === config.servers.staff) {
       await mirrorToUser(message);
     }
+    // Handle /embed content from any server channel
+    await routeServerMessage(message, client);
   } catch (err: unknown) {
     console.error('[EVENT] MessageCreate error:', (err as Error).message);
   }

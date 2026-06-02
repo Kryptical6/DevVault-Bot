@@ -90,7 +90,17 @@ export async function handlePostCategorySelect(userId: string, category: 'FH' | 
     await sendPrompt(dm, 'Role Needed', 'What type of developer are you looking for?', skillMenuLFD());
   } else {
     if (!member?.roles.cache.has(config.roles.main.marketplaceSubscriber)) {
-      await clearSession(userId); await dm.send({ embeds: [buildErrorEmbed('Subscription Required', 'You need an active Patreon subscription to sell assets. Use `/get-seller` if your role was not assigned.')] }); return;
+      await clearSession(userId);
+      const { ActionRowBuilder: ARB, ButtonBuilder: BB, ButtonStyle: BS } = await import('discord.js');
+      await dm.send({
+        embeds: [buildErrorEmbed('Subscription Required',
+          'You need an active Marketplace Subscription to sell assets on DevVault.\n\nSubscribe via Patreon to get access, then use `/get-seller` if your role is not assigned automatically.'
+        )],
+        components: [new ARB<InstanceType<typeof BB>>().addComponents(
+          new BB().setLabel('Subscribe on Patreon').setStyle(BS.Link).setURL('https://patreon.com/DevVault?utm_medium=unknown&utm_source=join_link&utm_campaign=creatorshare_creator&utm_content=copyLink')
+        )],
+      });
+      return;
     }
     await updateSession(userId, 1, { type: 'ASSET' });
     await sendPrompt(dm, 'Asset Category', 'What type of asset are you selling?', assetCatMenu());

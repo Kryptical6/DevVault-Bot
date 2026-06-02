@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // DEVVAULT — DATABASE HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
-import { query, nextPostId } from './index.js';
+import { query, nextPostId, nextTicketId } from './index.js';
 import type { Post, Application, DbUser, Ticket, ModEntry, WorkflowSession, MpNote, Purchase, ProofRequest } from '../types/index.js';
 import { config } from '../config/index.js';
 
@@ -117,13 +117,13 @@ export async function updatePostStatus(postId: string, status: string, extra?: U
   let sql = `UPDATE posts SET status = $2`;
   const params: unknown[] = [postId, status];
   let i = 3;
-  if (extra?.discord_message_id)   { sql += `, discord_message_id = $${i++}`;   params.push(extra.discord_message_id); }
-  if (extra?.staff_message_id)     { sql += `, staff_message_id = $${i++}`;     params.push(extra.staff_message_id); }
-  if (extra?.approved_at)          { sql += `, approved_at = $${i++}`;          params.push(extra.approved_at); }
-  if (extra?.archived_at)          { sql += `, archived_at = $${i++}`;          params.push(extra.archived_at); }
-  if (extra?.expires_at)           { sql += `, expires_at = $${i++}`;           params.push(extra.expires_at); }
+  if (extra?.discord_message_id)    { sql += `, discord_message_id = $${i++}`;    params.push(extra.discord_message_id); }
+  if (extra?.staff_message_id)      { sql += `, staff_message_id = $${i++}`;      params.push(extra.staff_message_id); }
+  if (extra?.approved_at)           { sql += `, approved_at = $${i++}`;           params.push(extra.approved_at); }
+  if (extra?.archived_at)           { sql += `, archived_at = $${i++}`;           params.push(extra.archived_at); }
+  if (extra?.expires_at)            { sql += `, expires_at = $${i++}`;            params.push(extra.expires_at); }
   if (extra?.repost_available_until){ sql += `, repost_available_until = $${i++}`; params.push(extra.repost_available_until); }
-  if (extra?.cooldown_expires_at)  { sql += `, cooldown_expires_at = $${i++}`;  params.push(extra.cooldown_expires_at); }
+  if (extra?.cooldown_expires_at)   { sql += `, cooldown_expires_at = $${i++}`;   params.push(extra.cooldown_expires_at); }
   sql += ` WHERE post_id = $1`;
   await query(sql, params);
 }
@@ -198,9 +198,9 @@ export async function updateApplicationStatus(
   let sql = `UPDATE applications SET status=$2`;
   const params: unknown[] = [appId, status];
   let i = 3;
-  if (extra?.actioned_by)    { sql += `, actioned_by=$${i++}`;    params.push(extra.actioned_by); }
-  if (extra?.actioned_at)    { sql += `, actioned_at=$${i++}`;    params.push(extra.actioned_at); }
-  if (extra?.denial_reasons) { sql += `, denial_reasons=$${i++}`; params.push(JSON.stringify(extra.denial_reasons)); }
+  if (extra?.actioned_by)     { sql += `, actioned_by=$${i++}`;     params.push(extra.actioned_by); }
+  if (extra?.actioned_at)     { sql += `, actioned_at=$${i++}`;     params.push(extra.actioned_at); }
+  if (extra?.denial_reasons)  { sql += `, denial_reasons=$${i++}`;  params.push(JSON.stringify(extra.denial_reasons)); }
   if (extra?.staff_message_id){ sql += `, staff_message_id=$${i++}`; params.push(extra.staff_message_id); }
   sql += ` WHERE application_id=$1`;
   await query(sql, params);
@@ -218,13 +218,80 @@ export async function getUserApplicationHistory(userId: string): Promise<string>
 // ─── TICKETS ─────────────────────────────────────────────────────────────────
 
 export async function createTicket(userId: string, ticketType: string, channelId: string): Promise<Ticket> {
-  const ticketId = `TKT-${Date.now().toString(36).toUpperCase()}`;
+  const ticketId = await nextTicketId();
   const r = await query(
     `INSERT INTO tickets (ticket_id,user_id,ticket_type,channel_id,status,created_at)
      VALUES ($1,$2,$3,$4,'open',NOW()) RETURNING *`,
     [ticketId, userId, ticketType, channelId]
   );
   return r.rows[0];
+}
+
+export async function logTicketMessage(data: {
+  ticketId: string; senderId: string; senderTag: string;
+  direction: 'user' | 'staff'; content: string; attachments?: string[];
+}): Promise<void> {
+  await query(
+    `INSERT INTO ticket_messages (ticket_id,sender_id,sender_tag,direction,content,attachments)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [data.ticketId, data.senderId, data.senderTag, data.direction,
+     data.content, JSON.stringify(data.attachments ?? [])]
+  );
+}
+
+export async function getTicketMessages(ticketId: string): Promise<{
+  sender_tag: string; direction: string; content: string;
+  attachments: string[]; sent_at: Date;
+}[]> {
+  const r = await query(
+    `SELECT sender_tag, direction, content, attachments, sent_at
+     FROM ticket_messages WHERE ticket_id=$1 ORDER BY sent_at ASC`,
+    [ticketId]
+  );
+  return r.rows.map(row => ({ ...row, attachments: row.attachments ?? [] }));
+}
+
+export function buildTicketTranscriptHtml(
+  ticketId: string, userTag: string, type: string,
+  messages: { sender_tag: string; direction: string; content: string; attachments: string[]; sent_at: Date }[]
+): string {
+  const rows = messages.map(m => {
+    const time = new Date(m.sent_at).toLocaleString('en-GB', { timeZone: 'UTC' });
+    const side = m.direction === 'user' ? 'user' : 'staff';
+    const attachLinks = (m.attachments as string[])
+      .map((a: string) => `<a href="${a}" target="_blank">Attachment</a>`).join(' ');
+    const safeContent = m.content
+      ? m.content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      : '<em>no text</em>';
+    return [
+      `<div class="msg ${side}">`,
+      `  <span class="meta">${m.sender_tag} &bull; ${time}</span>`,
+      `  <p>${safeContent}</p>`,
+      attachLinks ? `  <div class="attachments">${attachLinks}</div>` : '',
+      `</div>`,
+    ].filter(Boolean).join('\n');
+  }).join('\n');
+
+  return [
+    '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">',
+    `<title>Ticket ${ticketId}</title>`,
+    '<style>',
+    '  body{font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;background:#0f172a;color:#e2e8f0;padding:20px}',
+    '  h1{color:#94a3b8;font-size:1.1rem;margin-bottom:4px}',
+    '  .meta-bar{color:#64748b;font-size:.85rem;margin-bottom:24px}',
+    '  .msg{margin-bottom:16px;padding:12px 16px;border-radius:8px;max-width:90%}',
+    '  .user{background:#1e293b;margin-right:auto}',
+    '  .staff{background:#1e3a5f;margin-left:auto}',
+    '  .meta{font-size:.75rem;color:#94a3b8;display:block;margin-bottom:4px}',
+    '  p{margin:0;white-space:pre-wrap;word-break:break-word}',
+    '  .attachments{margin-top:6px;font-size:.8rem}',
+    '  .attachments a{color:#60a5fa}',
+    '</style></head><body>',
+    '<h1>DevVault Ticket Transcript</h1>',
+    `<div class="meta-bar">${ticketId} &bull; ${type} &bull; ${userTag} &bull; Closed ${new Date().toUTCString()}</div>`,
+    rows,
+    '</body></html>',
+  ].join('\n');
 }
 
 export async function getTicket(ticketId: string): Promise<Ticket | null> {
@@ -244,7 +311,7 @@ export async function getOpenTicketByUser(userId: string): Promise<Ticket | null
 
 export async function updateTicket(
   ticketId: string,
-  updates: { status?: string; claimed_by?: string; closed_at?: Date }
+  updates: { status?: string; claimed_by?: string; closed_at?: Date; channel_id?: string }
 ): Promise<void> {
   const sets: string[] = [];
   const params: unknown[] = [ticketId];
@@ -252,6 +319,7 @@ export async function updateTicket(
   if (updates.status)     { sets.push(`status=$${i++}`);     params.push(updates.status); }
   if (updates.claimed_by) { sets.push(`claimed_by=$${i++}`); params.push(updates.claimed_by); }
   if (updates.closed_at)  { sets.push(`closed_at=$${i++}`);  params.push(updates.closed_at); }
+  if (updates.channel_id) { sets.push(`channel_id=$${i++}`); params.push(updates.channel_id); }
   if (!sets.length) return;
   await query(`UPDATE tickets SET ${sets.join(',')} WHERE ticket_id=$1`, params);
 }

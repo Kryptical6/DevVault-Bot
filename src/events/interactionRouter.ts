@@ -26,13 +26,16 @@ import {
   handleApplySkillSelect, handleTicketTypeSelect, handleDmMessage
 } from '../workflows/postWorkflow.js';
 import {
+  handleEmbedChannelSelect, handleEmbedContent, getEmbedSession
+} from '../commands/index.js';
+import {
   handleBrowseTypeSelect, handleBrowseNav, handleBrowseSave,
   handleSavedNav, handleSavedRemove
 } from '../workflows/browseWorkflow.js';
 import {
   handleRepostSelect, handleRepostConfirm, handleRepostCancel
 } from '../workflows/repostWorkflow.js';
-import { buildErrorEmbed } from '../utils/embeds.js';
+import { buildErrorEmbed, buildSuccessEmbed } from '../utils/embeds.js';
 
 // ─── MAIN INTERACTION ROUTER ──────────────────────────────────────────────────
 
@@ -148,6 +151,38 @@ async function routeSelectMenu(interaction: StringSelectMenuInteraction, client:
   // Deny reasons
   if (id.startsWith('deny_reasons_')) return handleDenyReasonsSelect(interaction, id.replace('deny_reasons_', ''));
 
+  // Staff delete post picker
+  if (id.startsWith('staff_delete_post_')) {
+    await interaction.deferReply({ ephemeral: true });
+    const postId = interaction.values[0];
+    const { getPost, updatePostStatus, getUserPosts } = await import('../db/helpers.js');
+    const { logPost } = await import('../utils/logger.js');
+    const post = await getPost(postId);
+    if (!post) { await interaction.editReply({ embeds: [buildErrorEmbed('Not Found', 'Post not found.')] }); return; }
+    if (post.discord_message_id && post.status === 'live') {
+      try {
+        const { skillRoleMap, assetCategoryMap } = await import('../config/index.js');
+        let channelId = '';
+        if (post.post_type === 'FH')       channelId = Object.values(skillRoleMap).find((s: { label: string }) => s.label === post.category)?.mainFH ?? '';
+        else if (post.post_type === 'LFD') channelId = Object.values(skillRoleMap).find((s: { label: string }) => s.label === post.category)?.mainLFD ?? '';
+        else                               channelId = Object.values(assetCategoryMap).find((c: { label: string }) => c.label === post.category)?.mainChannel ?? '';
+        if (channelId) {
+          const ch  = await client.channels.fetch(channelId) as import('discord.js').TextChannel;
+          const msg = await ch.messages.fetch(post.discord_message_id);
+          await msg.delete();
+        }
+      } catch { /* already gone */ }
+    }
+    await updatePostStatus(postId, 'deleted');
+    try { await (await client.users.fetch(post.user_id)).send({ embeds: [buildErrorEmbed('Post Removed', `Your post has been removed by Marketplace Staff.\n\n-# ${post.post_id}`)] }); } catch { /* DMs off */ }
+    await logPost({ action: 'Deleted by Staff', postId: post.post_id, userId: post.user_id, username: post.user_id, actionedBy: interaction.user.id });
+    await interaction.editReply({ embeds: [buildSuccessEmbed('Deleted', `Post ${postId} has been removed.`)] });
+    return;
+  }
+
+  // Embed channel select
+  if (id === 'embed_channel_select') return handleEmbedChannelSelect(interaction, client);
+
   // Post workflow selects
   if (
     id === 'post_category_select' || id.startsWith('fh_') || id.startsWith('lfd_') ||
@@ -196,4 +231,12 @@ export async function routeDMMessage(message: import('discord.js').Message, clie
   const { mirrorToStaff } = await import('../systems/ticketSystem.js');
   await mirrorToStaff(message);
   await handleDmMessage(message);
+}
+
+// ─── SERVER MESSAGE ROUTER (for /embed content) ───────────────────────────────
+
+export async function routeServerMessage(message: import('discord.js').Message, client: Client): Promise<void> {
+  if (getEmbedSession(message.author.id)) {
+    await handleEmbedContent(message, client);
+  }
 }
