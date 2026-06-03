@@ -14,9 +14,22 @@ import {
 } from '../systems/moderationSystem.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GLOBAL COMMANDS — available in DMs and every server
+// GLOBAL COMMANDS
+// Only commands that must be truly universal (usable by anyone, anywhere) go
+// here. Currently none — marketplace commands are main-server guild commands
+// so they are naturally restricted to members of that server.
+// We keep this list to clear any previously registered global commands.
 // ─────────────────────────────────────────────────────────────────────────────
-const globalCommands = [
+const globalCommands: object[] = [];
+// Clear global commands so old registrations don't linger
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN SERVER COMMANDS
+// Marketplace + staff + admin. Guild commands from a shared server are also
+// available in DMs with the bot, so /post etc. work in DMs for main members.
+// ─────────────────────────────────────────────────────────────────────────────
+const mainServerCommands = [
+  // User-facing marketplace commands
   new SlashCommandBuilder().setName('post').setDescription('Create a new marketplace listing'),
   new SlashCommandBuilder().setName('repost').setDescription('Repost one of your archived listings'),
   new SlashCommandBuilder().setName('browse').setDescription('Browse marketplace listings'),
@@ -26,12 +39,7 @@ const globalCommands = [
   new SlashCommandBuilder().setName('analytics').setDescription('View analytics for your posts (Marketplace Subscribers only)'),
   new SlashCommandBuilder().setName('saved').setDescription('View your saved listings'),
   new SlashCommandBuilder().setName('mylogs').setDescription('View your own moderation history'),
-].map(c => c.toJSON());
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN SERVER COMMANDS — user-facing + mp staff + admin
-// ─────────────────────────────────────────────────────────────────────────────
-const mainServerCommands = [
+  // MP staff
   new SlashCommandBuilder().setName('mp-notes').setDescription('Add or view marketplace notes for a user')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
     .addStringOption(o => o.setName('note').setDescription('Note to add (leave blank to view existing notes)').setRequired(false)),
@@ -45,6 +53,7 @@ const mainServerCommands = [
   new SlashCommandBuilder().setName('delete-post').setDescription('Delete a marketplace post')
     .addStringOption(o => o.setName('post_id').setDescription('Post ID to delete directly (e.g. FH-0001)').setRequired(false))
     .addUserOption(o => o.setName('user').setDescription('Select a user to pick from their posts').setRequired(false)),
+  // Admin
   new SlashCommandBuilder().setName('grant-trusted-seller').setDescription('Grant Trusted Seller role to a user')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)),
   new SlashCommandBuilder().setName('embed').setDescription('Send a custom embed to a channel (Admin only)'),
@@ -172,28 +181,6 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, cl
     // Block every other command in appeals server
     await interaction.reply({ embeds: [buildErrorEmbed('Not Available', 'Use `/ticket` to open an appeal.')], ephemeral: true });
     return;
-  }
-
-  // Marketplace workflow commands: require user to be a member of the main server.
-  // /ticket and /mylogs are exempt — anyone anywhere can use those.
-  const marketplaceCmds = ['post', 'repost', 'browse', 'apply', 'get-seller', 'analytics', 'saved'];
-  if (marketplaceCmds.includes(cmd)) {
-    // Block from staff server and appeals server entirely
-    if (interaction.guild?.id === config.servers.staff || interaction.guild?.id === config.servers.appeals) {
-      await interaction.reply({ embeds: [buildErrorEmbed('Not Available', 'Marketplace commands can only be used in the DevVault main server or in DMs.')], ephemeral: true });
-      return;
-    }
-    // Check the user is actually in the main server (covers DM usage too)
-    let inMainServer = false;
-    try {
-      const mainGuild = await client.guilds.fetch(config.servers.main);
-      await mainGuild.members.fetch(interaction.user.id);
-      inMainServer = true;
-    } catch { /* not in main server */ }
-    if (!inMainServer) {
-      await interaction.reply({ embeds: [buildErrorEmbed('Access Denied', 'You must be a member of the DevVault server to use marketplace commands.')], ephemeral: true });
-      return;
-    }
   }
 
   // Global user commands — work in DMs and the main server only.
