@@ -20,8 +20,20 @@ import {
 // so they are naturally restricted to members of that server.
 // We keep this list to clear any previously registered global commands.
 // ─────────────────────────────────────────────────────────────────────────────
-const globalCommands: object[] = [];
-// Clear global commands so old registrations don't linger
+const globalCommands: object[] = [
+  // User-facing commands registered globally so they work in DMs.
+  // Access is controlled in the handler — staff/appeals servers are blocked,
+  // and marketplace commands require the user to be in the main server.
+  new SlashCommandBuilder().setName('post').setDescription('Create a new marketplace listing'),
+  new SlashCommandBuilder().setName('repost').setDescription('Repost one of your archived listings'),
+  new SlashCommandBuilder().setName('browse').setDescription('Browse marketplace listings'),
+  new SlashCommandBuilder().setName('apply').setDescription('Apply for a skill role'),
+  new SlashCommandBuilder().setName('ticket').setDescription('Open a support ticket'),
+  new SlashCommandBuilder().setName('get-seller').setDescription('Request marketplace access'),
+  new SlashCommandBuilder().setName('analytics').setDescription('View analytics for your posts'),
+  new SlashCommandBuilder().setName('saved').setDescription('View your saved listings'),
+  new SlashCommandBuilder().setName('mylogs').setDescription('View your own moderation history'),
+].map(c => c.toJSON());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MAIN SERVER COMMANDS
@@ -197,9 +209,33 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, cl
     return;
   }
 
-  // Global user commands — work in DMs and the main server only.
+  // Global user commands — redirect to DMs.
+  // Block marketplace commands in staff and appeals servers.
   const dmWorkflowCmds = ['post', 'repost', 'browse', 'apply', 'ticket', 'get-seller', 'analytics', 'saved'];
   if (dmWorkflowCmds.includes(cmd)) {
+    const isStaffServer   = interaction.guild?.id === config.servers.staff;
+    const isAppealsServer = interaction.guild?.id === config.servers.appeals;
+    const isMarketplaceCmd = ['post', 'repost', 'browse', 'apply', 'get-seller', 'analytics', 'saved'].includes(cmd);
+
+    // Block marketplace commands in staff and appeals servers entirely
+    if (isMarketplaceCmd && (isStaffServer || isAppealsServer)) {
+      await interaction.reply({ embeds: [buildErrorEmbed('Not Available', 'This command is not available here.')], ephemeral: true });
+      return;
+    }
+
+    // For marketplace commands in DMs, verify the user is in the main server
+    if (isMarketplaceCmd && !interaction.guild) {
+      let inMainServer = false;
+      try {
+        const mainGuild = await client.guilds.fetch(config.servers.main);
+        await mainGuild.members.fetch(interaction.user.id);
+        inMainServer = true;
+      } catch { /* not in main server */ }
+      if (!inMainServer) {
+        await interaction.reply({ embeds: [buildErrorEmbed('Access Denied', 'You must be a member of the DevVault server to use this command.')], ephemeral: true });
+        return;
+      }
+    }
     if (interaction.guild) {
       // Used in a server — send ephemeral reply then start DM workflow
       await interaction.reply({
