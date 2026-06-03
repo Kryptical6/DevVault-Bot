@@ -37,6 +37,9 @@ export async function handleCreateTicket(
 
   await upsertUser(userId, '');
   const user  = await ticketClient.users.fetch(userId);
+
+  // Determine which server to create the ticket in.
+  // If the request comes from the appeals server, use the staff server ticket system.
   const guild = await ticketClient.guilds.fetch(config.servers.staff);
   const catId = config.channels.ticketCategories[ticketType];
 

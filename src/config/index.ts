@@ -4,18 +4,22 @@
 import 'dotenv/config';
 
 export const config = {
-  token: process.env.BOT_TOKEN || process.env.DISCORD_TOKEN || '',
-  clientId: process.env.CLIENT_ID || '',
+  token:      process.env.BOT_TOKEN || process.env.DISCORD_TOKEN || '',
+  clientId:   process.env.CLIENT_ID || '',
   databaseUrl: process.env.DATABASE_URL || process.env.NEON_DATABASE_URL || '',
   serverInvite: process.env.MAIN_SERVER_INVITE || '',
 
   proofOfFundsThresholdRobux: parseInt(process.env.PROOF_OF_FUNDS_THRESHOLD_ROBUX || '10000'),
-  proofOfFundsThresholdUSD: parseFloat(process.env.PROOF_OF_FUNDS_THRESHOLD_USD || '50'),
+  proofOfFundsThresholdUSD:   parseFloat(process.env.PROOF_OF_FUNDS_THRESHOLD_USD  || '50'),
 
   servers: {
-    main:  '1509248976690348303',
-    staff: '1509358346619195413',
+    main:    '1509248976690348303',
+    staff:   '1509358346619195413',
+    appeals: '1511506974401888459',
   },
+
+  // Permanent invite sent to banned users
+  banServerInvite: 'https://discord.gg/errSKMPKmH',
 
   roles: {
     main: {
@@ -125,21 +129,19 @@ export const config = {
     trustedSeller: parseInt(process.env.FEATURED_SLOT_TRUSTED_HOURS  || '2') * 3_600_000,
   },
 
+  // Brighter, more vivid colours
   colours: {
-    fh:           0x2DD4BF,
-    lfd:          0x818CF8,
-    assets:       0xFBBF24,
-    applications: 0x94A3B8,
-    system:       0x1E293B,
-    approval:     0x22C55E,
-    denial:       0xEF4444,
-    proofRequest: 0xF97316,
-    moderation:   0xF43F5E,
+    fh:           0x00E5CC,  // vivid teal
+    lfd:          0x7C6AFF,  // vivid indigo
+    assets:       0xFFB800,  // vivid amber
+    applications: 0xA0B4C8,  // slate
+    system:       0x5865F2,  // Discord blurple
+    approval:     0x00C853,  // vivid green
+    denial:       0xFF3B3B,  // vivid red
+    proofRequest: 0xFF7A00,  // vivid orange
+    moderation:   0xFF2D55,  // vivid pink-red
   },
 
-  // Punishment tiers shown in the moderation dropdown inside review threads.
-  // action: 'warn' | 'marketplace_mute' | 'ban'
-  // durationDays: 0 = permanent
   moderationPunishments: [
     { id: 'warning',      label: 'Warning',                      action: 'warn',             durationDays: 0  },
     { id: 'mp_mute_7d',   label: 'Marketplace Mute (7 days)',    action: 'marketplace_mute', durationDays: 7  },
@@ -195,14 +197,14 @@ export const DENIAL_REASONS_FH: DenialReason[] = [
 ];
 
 export const DENIAL_REASONS_LFD: DenialReason[] = [
-  { id: 'incomplete_submission',       label: 'Incomplete Submission',             message: 'Please ensure all required information and materials are provided.' },
-  { id: 'insufficient_budget',         label: 'Insufficient Budget Information',   message: 'Please provide a clear payment amount and compensation structure.' },
-  { id: 'funds_unverified',            label: 'Funds Could Not Be Verified',       message: 'Available funds could not be verified.' },
-  { id: 'insufficient_funds_evidence', label: 'Insufficient Funds Evidence',       message: 'The submitted proof of funds was insufficient for verification.' },
-  { id: 'unrealistic_compensation',    label: 'Unrealistic Compensation',          message: 'The compensation offered does not reasonably align with the requested work.' },
-  { id: 'policy_violation',            label: 'Marketplace Policy Violation',      message: 'This submission does not comply with marketplace requirements.' },
-  { id: 'verification_not_met',        label: 'Verification Requirement Not Met',  message: 'Additional verification requirements have not been satisfied.' },
-  { id: 'other',                       label: 'Other',                             message: '' },
+  { id: 'incomplete_submission',       label: 'Incomplete Submission',           message: 'Please ensure all required information and materials are provided.' },
+  { id: 'insufficient_budget',         label: 'Insufficient Budget Information', message: 'Please provide a clear payment amount and compensation structure.' },
+  { id: 'funds_unverified',            label: 'Funds Could Not Be Verified',     message: 'Available funds could not be verified.' },
+  { id: 'insufficient_funds_evidence', label: 'Insufficient Funds Evidence',     message: 'The submitted proof of funds was insufficient for verification.' },
+  { id: 'unrealistic_compensation',    label: 'Unrealistic Compensation',        message: 'The compensation offered does not reasonably align with the requested work.' },
+  { id: 'policy_violation',            label: 'Marketplace Policy Violation',    message: 'This submission does not comply with marketplace requirements.' },
+  { id: 'verification_not_met',        label: 'Verification Requirement Not Met', message: 'Additional verification requirements have not been satisfied.' },
+  { id: 'other',                       label: 'Other',                           message: '' },
 ];
 
 export const DENIAL_REASONS_ASSET: DenialReason[] = [
@@ -221,16 +223,16 @@ export const DENIAL_REASONS_ASSET: DenialReason[] = [
 ];
 
 export const DENIAL_REASONS_APP: DenialReason[] = [
-  { id: 'insufficient_quality',            label: 'Insufficient Quality',                      message: 'This submission does not meet the current quality standards.' },
-  { id: 'incomplete_submission',           label: 'Incomplete Submission',                     message: 'Please ensure all required information and materials are provided.' },
-  { id: 'insufficient_showcase',           label: 'Insufficient Showcase',                     message: 'Please provide sufficient examples showcasing your work or product.' },
-  { id: 'ownership_unverified',            label: 'Ownership Cannot Be Verified',              message: 'Ownership of the submitted work could not be verified.' },
-  { id: 'insufficient_ownership_evidence', label: 'Insufficient Ownership Evidence',           message: 'The ownership evidence provided was insufficient for verification.' },
-  { id: 'portfolio_standards',             label: 'Portfolio Does Not Meet Standards',         message: 'The submitted portfolio does not currently meet the requirements for this role.' },
-  { id: 'skill_level',                     label: 'Skill Level Does Not Meet Requirements',    message: 'The demonstrated skill level does not currently meet the requirements for this role.' },
-  { id: 'portfolio_access',                label: 'Portfolio Access Issue',                    message: 'The submitted portfolio could not be accessed or reviewed.' },
-  { id: 'verification_not_met',            label: 'Verification Requirement Not Met',          message: 'Additional verification requirements have not been satisfied.' },
-  { id: 'other',                           label: 'Other',                                     message: '' },
+  { id: 'insufficient_quality',            label: 'Insufficient Quality',                   message: 'This submission does not meet the current quality standards.' },
+  { id: 'incomplete_submission',           label: 'Incomplete Submission',                  message: 'Please ensure all required information and materials are provided.' },
+  { id: 'insufficient_showcase',           label: 'Insufficient Showcase',                  message: 'Please provide sufficient examples showcasing your work or product.' },
+  { id: 'ownership_unverified',            label: 'Ownership Cannot Be Verified',           message: 'Ownership of the submitted work could not be verified.' },
+  { id: 'insufficient_ownership_evidence', label: 'Insufficient Ownership Evidence',        message: 'The ownership evidence provided was insufficient for verification.' },
+  { id: 'portfolio_standards',             label: 'Portfolio Does Not Meet Standards',      message: 'The submitted portfolio does not currently meet the requirements for this role.' },
+  { id: 'skill_level',                     label: 'Skill Level Does Not Meet Requirements', message: 'The demonstrated skill level does not currently meet the requirements for this role.' },
+  { id: 'portfolio_access',                label: 'Portfolio Access Issue',                 message: 'The submitted portfolio could not be accessed or reviewed.' },
+  { id: 'verification_not_met',            label: 'Verification Requirement Not Met',       message: 'Additional verification requirements have not been satisfied.' },
+  { id: 'other',                           label: 'Other',                                  message: '' },
 ];
 
 export const MODERATION_REASONS: DenialReason[] = [

@@ -33,11 +33,9 @@ async function handleBanExpiry(userId: string): Promise<void> {
     await updateUserBan(userId, false);
     const user = await modClient.users.fetch(userId);
     const embed = buildSuccessEmbed('Ban Expired', "Your ban from DevVault has expired. You're welcome to rejoin.");
-    const components = config.serverInvite
-      ? [new ActionRowBuilder<ButtonBuilder>().addComponents(
-          new ButtonBuilder().setLabel('Rejoin Server').setStyle(ButtonStyle.Link).setURL(config.serverInvite)
-        )]
-      : [];
+    const components = [new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setLabel('Rejoin DevVault').setStyle(ButtonStyle.Link).setURL(config.serverInvite || config.banServerInvite)
+    )];
     await user.send({ embeds: [embed], components });
   } catch { /* DMs off */ }
 }
@@ -173,7 +171,10 @@ export async function handleBanModal(interaction: ModalSubmitInteraction, target
 
   try {
     const user = await interaction.client.users.fetch(targetId);
-    await user.send({ embeds: [buildInfoEmbed('Banned', `You have been banned from DevVault.\n\n**Reason:** ${reason}\n**Duration:** ${label}`)], components: [buildAppealButton()] });
+    const components = [new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setLabel('Ban Appeals Server').setStyle(ButtonStyle.Link).setURL(config.banServerInvite)
+    )];
+    await user.send({ embeds: [buildInfoEmbed('Banned', `You have been banned from DevVault.\n\n**Reason:** ${reason}\n**Duration:** ${label}\n\nYou can join our appeals server to contest this decision.`)], components });
   } catch { /* DMs off */ }
 
   const member = await guild.members.fetch(targetId).catch(() => null);

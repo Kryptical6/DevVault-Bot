@@ -14,7 +14,7 @@ import {
 } from '../systems/moderationSystem.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GLOBAL COMMANDS — registered globally so they work in DMs and every server
+// GLOBAL COMMANDS — available in DMs and every server
 // ─────────────────────────────────────────────────────────────────────────────
 const globalCommands = [
   new SlashCommandBuilder().setName('post').setDescription('Create a new marketplace listing'),
@@ -29,10 +29,34 @@ const globalCommands = [
 ].map(c => c.toJSON());
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GUILD COMMANDS — registered only on main + staff servers, not available in DMs
+// MAIN SERVER COMMANDS — user-facing + mp staff + admin
 // ─────────────────────────────────────────────────────────────────────────────
-const guildCommands = [
-  // Moderation
+const mainServerCommands = [
+  new SlashCommandBuilder().setName('mp-notes').setDescription('Add or view marketplace notes for a user')
+    .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
+    .addStringOption(o => o.setName('note').setDescription('Note to add (leave blank to view existing notes)').setRequired(false)),
+  new SlashCommandBuilder().setName('marketplace-mute').setDescription('Restrict a user from marketplace features')
+    .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
+    .addStringOption(o => o.setName('duration').setDescription('Duration e.g. 7d, 30d, or 0 for permanent').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason for the restriction').setRequired(true)),
+  new SlashCommandBuilder().setName('marketplace-unmute').setDescription('Remove a marketplace restriction from a user')
+    .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason for removal').setRequired(true)),
+  new SlashCommandBuilder().setName('delete-post').setDescription('Delete a marketplace post')
+    .addStringOption(o => o.setName('post_id').setDescription('Post ID to delete directly (e.g. FH-0001)').setRequired(false))
+    .addUserOption(o => o.setName('user').setDescription('Select a user to pick from their posts').setRequired(false)),
+  new SlashCommandBuilder().setName('grant-trusted-seller').setDescription('Grant Trusted Seller role to a user')
+    .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)),
+  new SlashCommandBuilder().setName('embed').setDescription('Send a custom embed to a channel (Admin only)'),
+  new SlashCommandBuilder().setName('get-delivery').setDescription('Retrieve the private delivery link for an asset post (Admin only, logged)')
+    .addStringOption(o => o.setName('post_id').setDescription('Asset post ID e.g. ASSET-0001').setRequired(true)),
+  new SlashCommandBuilder().setName('audit-log').setDescription('View system audit log (Admin only)'),
+].map(c => c.toJSON());
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STAFF SERVER COMMANDS — moderation + admin tools
+// ─────────────────────────────────────────────────────────────────────────────
+const staffServerCommands = [
   new SlashCommandBuilder().setName('warn').setDescription('Issue a warning to a user')
     .addUserOption(o => o.setName('user').setDescription('User to warn').setRequired(true)),
   new SlashCommandBuilder().setName('mute').setDescription('Timeout a user (Discord mute)')
@@ -49,8 +73,6 @@ const guildCommands = [
     .addStringOption(o => o.setName('user_id').setDescription('Discord user ID').setRequired(true)),
   new SlashCommandBuilder().setName('mod-logs').setDescription('View full moderation history for a user')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)),
-
-  // Marketplace staff
   new SlashCommandBuilder().setName('mp-notes').setDescription('Add or view marketplace notes for a user')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
     .addStringOption(o => o.setName('note').setDescription('Note to add (leave blank to view existing notes)').setRequired(false)),
@@ -64,14 +86,19 @@ const guildCommands = [
   new SlashCommandBuilder().setName('delete-post').setDescription('Delete a marketplace post')
     .addStringOption(o => o.setName('post_id').setDescription('Post ID to delete directly (e.g. FH-0001)').setRequired(false))
     .addUserOption(o => o.setName('user').setDescription('Select a user to pick from their posts').setRequired(false)),
-
-  // Admin
   new SlashCommandBuilder().setName('grant-trusted-seller').setDescription('Grant Trusted Seller role to a user')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)),
   new SlashCommandBuilder().setName('embed').setDescription('Send a custom embed to a channel (Admin only)'),
   new SlashCommandBuilder().setName('get-delivery').setDescription('Retrieve the private delivery link for an asset post (Admin only, logged)')
     .addStringOption(o => o.setName('post_id').setDescription('Asset post ID e.g. ASSET-0001').setRequired(true)),
   new SlashCommandBuilder().setName('audit-log').setDescription('View system audit log (Admin only)'),
+].map(c => c.toJSON());
+
+// ─────────────────────────────────────────────────────────────────────────────
+// APPEALS SERVER COMMANDS — ticket only + embed for admins
+// ─────────────────────────────────────────────────────────────────────────────
+const appealsServerCommands = [
+  new SlashCommandBuilder().setName('embed').setDescription('Send a custom embed to a channel (Admin only)'),
 ].map(c => c.toJSON());
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,10 +110,11 @@ export async function registerCommands(): Promise<void> {
   try {
     // Global: works in DMs and all servers
     await rest.put(Routes.applicationCommands(config.clientId), { body: globalCommands });
-    // Guild-only: staff/admin commands on main + staff servers only
-    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.main),  { body: guildCommands });
-    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.staff), { body: guildCommands });
-    console.log('[CMD] Commands registered: global (DM + servers) + guild-only (staff/admin).');
+    // Per-server filtered command sets
+    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.main),    { body: mainServerCommands });
+    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.staff),   { body: staffServerCommands });
+    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.appeals), { body: appealsServerCommands });
+    console.log('[CMD] Commands registered: global + main + staff + appeals.');
   } catch (err: unknown) {
     console.error('[CMD] Failed to register commands:', err instanceof Error ? err.message : err);
   }
