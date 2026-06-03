@@ -473,26 +473,51 @@ async function handleProofDeadlineExpiry(targetId: string): Promise<void> {
 // ─── MODERATE PIPELINE ────────────────────────────────────────────────────────
 
 export async function handleReviewModerate(interaction: ButtonInteraction, targetId: string): Promise<void> {
+  // Step 1: show a dropdown to select the moderation reason category
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`moderate_reason_select_${targetId}`)
+    .setPlaceholder('Select the issue type')
+    .addOptions(
+      new StringSelectMenuOptionBuilder().setLabel('AI Generated Content').setValue('AI Generated Content').setDescription('Suspected use of AI in work samples or portfolio'),
+      new StringSelectMenuOptionBuilder().setLabel('Stolen / Plagiarised Content').setValue('Stolen or Plagiarised Content').setDescription('Content appears to be taken from another creator'),
+      new StringSelectMenuOptionBuilder().setLabel('Ownership Dispute').setValue('Ownership Dispute').setDescription('Ownership of the submitted work is in question'),
+      new StringSelectMenuOptionBuilder().setLabel('Fraud or Misrepresentation').setValue('Fraud or Misrepresentation').setDescription('Work, pricing, or identity appears to be misrepresented'),
+      new StringSelectMenuOptionBuilder().setLabel('Repeated Policy Violations').setValue('Repeated Policy Violations').setDescription('User has a pattern of breaking marketplace rules'),
+      new StringSelectMenuOptionBuilder().setLabel('Circumvention Attempt').setValue('Circumvention Attempt').setDescription('Appears to be bypassing marketplace requirements'),
+      new StringSelectMenuOptionBuilder().setLabel('Other').setValue('Other').setDescription('Issue does not fit the above categories'),
+    );
+
+  await interaction.reply({
+    embeds: [buildInfoEmbed('Select Issue Type', 'Choose the category that best describes the problem with this submission.')],
+    components: [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(select)],
+    ephemeral: true,
+  });
+}
+
+export async function handleModerateReasonSelect(interaction: StringSelectMenuInteraction, targetId: string): Promise<void> {
+  // Step 2: after selecting reason, show modal for explanation + evidence
+  const reason = interaction.values[0];
   await interaction.showModal(
-    new ModalBuilder().setCustomId(`moderate_modal_${targetId}`).setTitle('Moderate Submission').addComponents(
+    new ModalBuilder().setCustomId(`moderate_modal_${targetId}__${encodeURIComponent(reason)}`).setTitle('Moderation Details').addComponents(
       new ActionRowBuilder<ModalActionRowComponentBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('reason').setLabel('Reason (select from: AI, Stolen, Fraud etc.)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(200)
+        new TextInputBuilder().setCustomId('explanation').setLabel('Explanation').setStyle(TextInputStyle.Paragraph)
+          .setRequired(true).setMaxLength(1000)
+          .setPlaceholder('Describe what was found and why this is an issue.')
       ),
       new ActionRowBuilder<ModalActionRowComponentBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('explanation').setLabel('Explanation').setStyle(TextInputStyle.Paragraph).setRequired(true).setMaxLength(1000)
-      ),
-      new ActionRowBuilder<ModalActionRowComponentBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('evidence').setLabel('Evidence (links, screenshots)').setStyle(TextInputStyle.Paragraph).setRequired(false).setMaxLength(500)
+        new TextInputBuilder().setCustomId('evidence').setLabel('Evidence (links, screenshots)').setStyle(TextInputStyle.Paragraph)
+          .setRequired(false).setMaxLength(500)
+          .setPlaceholder('Optional: paste links to evidence.')
       )
     )
   );
 }
 
-export async function handleModerateModal(interaction: ModalSubmitInteraction, targetId: string): Promise<void> {
+export async function handleModerateModal(interaction: ModalSubmitInteraction, targetId: string, encodedReason: string): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   if (!reviewClient) return;
 
-  const reason      = interaction.fields.getTextInputValue('reason');
+  const reason      = decodeURIComponent(encodedReason);
   const explanation = interaction.fields.getTextInputValue('explanation');
   const evidence    = interaction.fields.getTextInputValue('evidence') || '';
   const isApp       = targetId.startsWith('APP-');

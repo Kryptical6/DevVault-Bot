@@ -3,7 +3,7 @@ import {
   handleReviewApprove, handleReviewDeny, handleReviewProofOwnership,
   handleReviewProofFunds, handleReviewModerate,
   handleDenyReasonsSelect, handleDenyOtherModal, handleDenyCustomModal,
-  handleModerateModal, handleProofSubmission, handleProofSubmitModal,
+  handleModerateModal, handleModerateReasonSelect, handleProofSubmission, handleProofSubmitModal,
   handleProofApprove, handleProofDeny
 } from '../systems/reviewSystem.js';
 import {
@@ -148,6 +148,9 @@ async function routeSelectMenu(interaction: StringSelectMenuInteraction, client:
   // Repost
   if (id === 'repost_select') return handleRepostSelect(interaction.user.id, interaction.values[0], interaction);
 
+  // Moderate reason select
+  if (id.startsWith('moderate_reason_select_')) return handleModerateReasonSelect(interaction, id.replace('moderate_reason_select_', ''));
+
   // Deny reasons
   if (id.startsWith('deny_reasons_')) return handleDenyReasonsSelect(interaction, id.replace('deny_reasons_', ''));
 
@@ -211,8 +214,15 @@ async function routeModal(interaction: ModalSubmitInteraction, client: Client): 
   // Review deny modals
   if (id.startsWith('deny_custom_modal_')) return handleDenyCustomModal(interaction, id.replace('deny_custom_modal_', ''));
 
-  // Moderate modal
-  if (id.startsWith('moderate_modal_')) return handleModerateModal(interaction, id.replace('moderate_modal_', ''));
+  // Moderate modal — ID format: moderate_modal_TARGETID__ENCODEDREASON
+  if (id.startsWith('moderate_modal_')) {
+    const rest = id.replace('moderate_modal_', '');
+    const sep  = rest.indexOf('__');
+    if (sep === -1) return; // malformed
+    const targetId      = rest.slice(0, sep);
+    const encodedReason = rest.slice(sep + 2);
+    return handleModerateModal(interaction, targetId, encodedReason);
+  }
 
   // Proof submit modals
   if (id.startsWith('proof_submit_modal_ownership_')) return handleProofSubmitModal(interaction, 'ownership', id.replace('proof_submit_modal_ownership_', ''));

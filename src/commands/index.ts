@@ -174,9 +174,29 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, cl
     return;
   }
 
-  // Global user commands — work in DMs and servers.
-  // When used in a server they redirect the user to DMs.
-  // When used directly in DMs they start the workflow immediately.
+  // Marketplace workflow commands: require user to be a member of the main server.
+  // /ticket and /mylogs are exempt — anyone anywhere can use those.
+  const marketplaceCmds = ['post', 'repost', 'browse', 'apply', 'get-seller', 'analytics', 'saved'];
+  if (marketplaceCmds.includes(cmd)) {
+    // Block from staff server and appeals server entirely
+    if (interaction.guild?.id === config.servers.staff || interaction.guild?.id === config.servers.appeals) {
+      await interaction.reply({ embeds: [buildErrorEmbed('Not Available', 'Marketplace commands can only be used in the DevVault main server or in DMs.')], ephemeral: true });
+      return;
+    }
+    // Check the user is actually in the main server (covers DM usage too)
+    let inMainServer = false;
+    try {
+      const mainGuild = await client.guilds.fetch(config.servers.main);
+      await mainGuild.members.fetch(interaction.user.id);
+      inMainServer = true;
+    } catch { /* not in main server */ }
+    if (!inMainServer) {
+      await interaction.reply({ embeds: [buildErrorEmbed('Access Denied', 'You must be a member of the DevVault server to use marketplace commands.')], ephemeral: true });
+      return;
+    }
+  }
+
+  // Global user commands — work in DMs and the main server only.
   const dmWorkflowCmds = ['post', 'repost', 'browse', 'apply', 'ticket', 'get-seller', 'analytics', 'saved'];
   if (dmWorkflowCmds.includes(cmd)) {
     if (interaction.guild) {
