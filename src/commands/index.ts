@@ -13,10 +13,10 @@ import {
   handleUnmute, handleUnban, handleModLogs, handleMyLogs
 } from '../systems/moderationSystem.js';
 
-// ─── SLASH COMMAND DEFINITIONS ────────────────────────────────────────────────
-
-const commands = [
-  // ── USER COMMANDS ──────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// GLOBAL COMMANDS — registered globally so they work in DMs and every server
+// ─────────────────────────────────────────────────────────────────────────────
+const globalCommands = [
   new SlashCommandBuilder().setName('post').setDescription('Create a new marketplace listing'),
   new SlashCommandBuilder().setName('repost').setDescription('Repost one of your archived listings'),
   new SlashCommandBuilder().setName('browse').setDescription('Browse marketplace listings'),
@@ -26,8 +26,13 @@ const commands = [
   new SlashCommandBuilder().setName('analytics').setDescription('View analytics for your posts (Marketplace Subscribers only)'),
   new SlashCommandBuilder().setName('saved').setDescription('View your saved listings'),
   new SlashCommandBuilder().setName('mylogs').setDescription('View your own moderation history'),
+].map(c => c.toJSON());
 
-  // ── MODERATION COMMANDS ───────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// GUILD COMMANDS — registered only on main + staff servers, not available in DMs
+// ─────────────────────────────────────────────────────────────────────────────
+const guildCommands = [
+  // Moderation
   new SlashCommandBuilder().setName('warn').setDescription('Issue a warning to a user')
     .addUserOption(o => o.setName('user').setDescription('User to warn').setRequired(true)),
   new SlashCommandBuilder().setName('mute').setDescription('Timeout a user (Discord mute)')
@@ -45,7 +50,7 @@ const commands = [
   new SlashCommandBuilder().setName('mod-logs').setDescription('View full moderation history for a user')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)),
 
-  // ── MARKETPLACE STAFF COMMANDS ────────────────────────────────────────────
+  // Marketplace staff
   new SlashCommandBuilder().setName('mp-notes').setDescription('Add or view marketplace notes for a user')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
     .addStringOption(o => o.setName('note').setDescription('Note to add (leave blank to view existing notes)').setRequired(false)),
@@ -56,33 +61,40 @@ const commands = [
   new SlashCommandBuilder().setName('marketplace-unmute').setDescription('Remove a marketplace restriction from a user')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
     .addStringOption(o => o.setName('reason').setDescription('Reason for removal').setRequired(true)),
-
-  // ── ADMIN COMMANDS ────────────────────────────────────────────────────────
-  new SlashCommandBuilder().setName('grant-trusted-seller').setDescription('Grant Trusted Seller role to a user')
-    .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)),
   new SlashCommandBuilder().setName('delete-post').setDescription('Delete a marketplace post')
     .addStringOption(o => o.setName('post_id').setDescription('Post ID to delete directly (e.g. FH-0001)').setRequired(false))
     .addUserOption(o => o.setName('user').setDescription('Select a user to pick from their posts').setRequired(false)),
+
+  // Admin
+  new SlashCommandBuilder().setName('grant-trusted-seller').setDescription('Grant Trusted Seller role to a user')
+    .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)),
   new SlashCommandBuilder().setName('embed').setDescription('Send a custom embed to a channel (Admin only)'),
   new SlashCommandBuilder().setName('get-delivery').setDescription('Retrieve the private delivery link for an asset post (Admin only, logged)')
     .addStringOption(o => o.setName('post_id').setDescription('Asset post ID e.g. ASSET-0001').setRequired(true)),
   new SlashCommandBuilder().setName('audit-log').setDescription('View system audit log (Admin only)'),
 ].map(c => c.toJSON());
 
-// ─── REGISTER COMMANDS ────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// REGISTER
+// ─────────────────────────────────────────────────────────────────────────────
 
 export async function registerCommands(): Promise<void> {
   const rest = new REST().setToken(config.token);
   try {
-    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.main),  { body: commands });
-    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.staff), { body: commands });
-    console.log('[CMD] Slash commands registered to both servers.');
+    // Global: works in DMs and all servers
+    await rest.put(Routes.applicationCommands(config.clientId), { body: globalCommands });
+    // Guild-only: staff/admin commands on main + staff servers only
+    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.main),  { body: guildCommands });
+    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.staff), { body: guildCommands });
+    console.log('[CMD] Commands registered: global (DM + servers) + guild-only (staff/admin).');
   } catch (err: unknown) {
     console.error('[CMD] Failed to register commands:', err instanceof Error ? err.message : err);
   }
 }
 
-// ─── PERMISSION HELPERS ───────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// PERMISSION HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
 
 function isAdmin(member: GuildMember): boolean {
   return member.roles.cache.has(config.roles.main.admin) || member.roles.cache.has(config.roles.staff.admin);
@@ -100,40 +112,53 @@ function isMpStaff(member: GuildMember): boolean {
     || member.roles.cache.has(config.roles.staff.marketplaceStaff);
 }
 
-// ─── COMMAND HANDLER ──────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// COMMAND HANDLER
+// ─────────────────────────────────────────────────────────────────────────────
 
 export async function handleCommand(interaction: ChatInputCommandInteraction, client: Client): Promise<void> {
   const cmd = interaction.commandName;
 
-  // DM-redirect commands must be checked before the guild guard.
-  // They are run from server channels and redirect the user to DMs.
-  const dmCommands = ['post', 'repost', 'browse', 'apply', 'ticket', 'get-seller', 'analytics', 'saved'];
-  if (dmCommands.includes(cmd)) {
-    if (!interaction.guild) {
-      await interaction.reply({ embeds: [buildErrorEmbed('Server Only', 'Please use this command in the DevVault server.')], ephemeral: true });
-      return;
+  // Global user commands — work in DMs and servers.
+  // When used in a server they redirect the user to DMs.
+  // When used directly in DMs they start the workflow immediately.
+  const dmWorkflowCmds = ['post', 'repost', 'browse', 'apply', 'ticket', 'get-seller', 'analytics', 'saved'];
+  if (dmWorkflowCmds.includes(cmd)) {
+    if (interaction.guild) {
+      // Used in a server — send ephemeral reply then start DM workflow
+      await interaction.reply({
+        embeds: [buildInfoEmbed('Check your DMs', "Head to your DMs to continue. I've sent you a message.")],
+        ephemeral: true,
+      });
+    } else {
+      // Used directly in DMs — acknowledge silently then start workflow
+      await interaction.deferReply({ ephemeral: true });
+      await interaction.deleteReply().catch(() => null);
     }
-    await interaction.reply({ embeds: [buildInfoEmbed('Check your DMs', "Head to your DMs to continue. I've sent you a message.")], ephemeral: true });
     const { routeDmCommand } = await import('../workflows/postWorkflow.js');
     await routeDmCommand(interaction.user, cmd, client);
     return;
   }
 
-  // All other commands require a server context
-  if (!interaction.guild) {
-    await interaction.reply({ embeds: [buildErrorEmbed('Server Only', 'This command can only be used in a server.')], ephemeral: true });
-    return;
-  }
-
-  const member = interaction.member as GuildMember;
-
-  // ── USER COMMANDS (server only) ────────────────────────────────────────────
+  // /mylogs works in both DMs and servers
   if (cmd === 'mylogs') {
     await handleMyLogs(interaction);
     return;
   }
 
-  // ── MODERATION COMMANDS ───────────────────────────────────────────────────
+  // All remaining commands are guild-only (registered as guild commands so
+  // Discord won't even show them in DMs, but guard anyway)
+  if (!interaction.guild) {
+    await interaction.reply({
+      embeds: [buildErrorEmbed('Server Only', 'This command can only be used in a server.')],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const member = interaction.member as GuildMember;
+
+  // Moderation commands
   if (['warn', 'mute', 'kick', 'ban', 'note', 'unmute', 'unban', 'mod-logs'].includes(cmd)) {
     if (!isMod(member)) {
       await interaction.reply({ embeds: [buildErrorEmbed('No Permission', 'This command requires Moderator or above.')], ephemeral: true });
@@ -152,51 +177,51 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, cl
     return;
   }
 
-  // ── MARKETPLACE STAFF COMMANDS ────────────────────────────────────────────
+  // Marketplace staff commands
   if (['mp-notes', 'marketplace-mute', 'marketplace-unmute', 'delete-post'].includes(cmd)) {
     if (!isMpStaff(member)) {
       await interaction.reply({ embeds: [buildErrorEmbed('No Permission', 'This command requires Marketplace Staff or above.')], ephemeral: true });
       return;
     }
     switch (cmd) {
-      case 'mp-notes':           await handleMpNotes(interaction);          break;
-      case 'marketplace-mute':   await handleMarketplaceMute(interaction);  break;
-      case 'marketplace-unmute': await handleMarketplaceUnmute(interaction); break;
+      case 'mp-notes':           await handleMpNotes(interaction);           break;
+      case 'marketplace-mute':   await handleMarketplaceMute(interaction);   break;
+      case 'marketplace-unmute': await handleMarketplaceUnmute(interaction);  break;
       case 'delete-post':        await handleDeletePost(interaction, client); break;
     }
     return;
   }
 
-  // ── ADMIN COMMANDS ────────────────────────────────────────────────────────
+  // Admin commands
   if (['grant-trusted-seller', 'audit-log', 'embed', 'get-delivery'].includes(cmd)) {
     if (!isAdmin(member)) {
       await interaction.reply({ embeds: [buildErrorEmbed('No Permission', 'This command requires Admin.')], ephemeral: true });
       return;
     }
     switch (cmd) {
-      case 'grant-trusted-seller': await handleGrantTrustedSeller(interaction); break;
-      case 'audit-log':            await handleAuditLog(interaction);            break;
-      case 'embed':                await handleEmbed(interaction, client);       break;
-      case 'get-delivery':         await handleGetDelivery(interaction);         break;
+      case 'grant-trusted-seller': await handleGrantTrustedSeller(interaction);      break;
+      case 'audit-log':            await handleAuditLog(interaction);                break;
+      case 'embed':                await handleEmbed(interaction, client);           break;
+      case 'get-delivery':         await handleGetDelivery(interaction);             break;
     }
     return;
   }
 }
 
-// ─── /mp-notes ────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// /mp-notes
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function handleMpNotes(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
-  const target = interaction.options.getUser('user', true);
+  const target   = interaction.options.getUser('user', true);
   const noteText = interaction.options.getString('note');
 
   if (noteText) {
-    // Add mode
     await upsertUser(target.id, target.tag);
     await addMpNote(target.id, noteText, interaction.user.id);
     await interaction.editReply({ embeds: [buildSuccessEmbed('Note Added', `Marketplace note added to <@${target.id}>.`)] });
   } else {
-    // View mode
     const notes = await getMpNotes(target.id);
     if (!notes.length) {
       await interaction.editReply({ embeds: [buildInfoEmbed('MP Notes', `No marketplace notes found for <@${target.id}>.`)] });
@@ -211,20 +236,22 @@ async function handleMpNotes(interaction: ChatInputCommandInteraction): Promise<
         .setTitle(`MP Notes: ${target.tag}`)
         .setDescription(lines.slice(0, 4000))
         .setFooter({ text: 'DevVault' })
-      ]
+      ],
     });
   }
 }
 
-// ─── /marketplace-mute ───────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// /marketplace-mute
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function handleMarketplaceMute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
-  const target     = interaction.options.getUser('user', true);
+  const target      = interaction.options.getUser('user', true);
   const durationStr = interaction.options.getString('duration', true);
-  const reason     = interaction.options.getString('reason', true);
+  const reason      = interaction.options.getString('reason', true);
 
-  const isPerm    = durationStr === '0' || durationStr.toLowerCase() === 'perm';
+  const isPerm     = durationStr === '0' || durationStr.toLowerCase() === 'perm';
   const durationMs = isPerm ? null : parseDuration(durationStr);
   if (!isPerm && !durationMs) {
     await interaction.editReply({ embeds: [buildErrorEmbed('Invalid Duration', 'Use formats like 7d, 30d, or 0 for permanent.')] });
@@ -243,9 +270,9 @@ async function handleMarketplaceMute(interaction: ChatInputCommandInteraction): 
   });
 
   try {
-    const { buildInfoEmbed: info, buildAppealButton } = await import('../utils/embeds.js');
+    const { buildAppealButton } = await import('../utils/embeds.js');
     await target.send({
-      embeds: [info('Marketplace Restriction', `You have been restricted from marketplace features.\n\n**Reason:** ${reason}\n**Duration:** ${label}`)],
+      embeds: [buildInfoEmbed('Marketplace Restriction', `You have been restricted from marketplace features.\n\n**Reason:** ${reason}\n**Duration:** ${label}`)],
       components: [buildAppealButton()],
     });
   } catch { /* DMs off */ }
@@ -255,7 +282,9 @@ async function handleMarketplaceMute(interaction: ChatInputCommandInteraction): 
   await interaction.editReply({ embeds: [buildSuccessEmbed('Muted', `<@${target.id}> is now marketplace restricted for ${label}.`)] });
 }
 
-// ─── /marketplace-unmute ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// /marketplace-unmute
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function handleMarketplaceUnmute(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
@@ -264,7 +293,7 @@ async function handleMarketplaceUnmute(interaction: ChatInputCommandInteraction)
 
   await updateUserMpMute(target.id, false);
   const entries = await getActiveModEntries(target.id);
-  const mute = entries.find(e => e.action_type === 'marketplace_mute');
+  const mute    = entries.find(e => e.action_type === 'marketplace_mute');
   if (mute) await deactivateModEntry(mute.entry_id, interaction.user.id, reason);
 
   try { await target.send({ embeds: [buildSuccessEmbed('Restriction Removed', 'Your marketplace restriction has been removed.')] }); }
@@ -275,7 +304,9 @@ async function handleMarketplaceUnmute(interaction: ChatInputCommandInteraction)
   await interaction.editReply({ embeds: [buildSuccessEmbed('Unmuted', `<@${target.id}>'s marketplace restriction has been removed.`)] });
 }
 
-// ─── /grant-trusted-seller ───────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// /grant-trusted-seller
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function handleGrantTrustedSeller(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
@@ -285,19 +316,20 @@ async function handleGrantTrustedSeller(interaction: ChatInputCommandInteraction
   const hasSub   = target.roles.cache.has(config.roles.main.marketplaceSubscriber);
   const skillIds = [
     config.roles.main.scripter, config.roles.main.uiDesigner, config.roles.main.builder,
-    config.roles.main.animator, config.roles.main.vfx, config.roles.main.modeller,
+    config.roles.main.animator, config.roles.main.vfx,        config.roles.main.modeller,
   ];
   const hasSkill = skillIds.some(id => target.roles.cache.has(id));
 
   if (!hasSub)   { await interaction.editReply({ embeds: [buildErrorEmbed('Cannot Grant', 'User does not have Marketplace Subscriber.')] }); return; }
   if (!hasSkill) { await interaction.editReply({ embeds: [buildErrorEmbed('Cannot Grant', 'User does not have a skill role.')] }); return; }
 
-  const activeEntries = await getActiveModEntries(target.id);
-  const hasSeverePunishment = activeEntries.some(e => e.action_type === 'ban' || e.action_type === 'marketplace_mute');
-  if (hasSeverePunishment) { await interaction.editReply({ embeds: [buildErrorEmbed('Cannot Grant', 'User has active severe punishments.')] }); return; }
+  const active = await getActiveModEntries(target.id);
+  if (active.some(e => e.action_type === 'ban' || e.action_type === 'marketplace_mute')) {
+    await interaction.editReply({ embeds: [buildErrorEmbed('Cannot Grant', 'User has active severe punishments.')] }); return;
+  }
 
   await target.roles.add(config.roles.main.trustedSeller);
-  try { await target.user.send({ embeds: [buildSuccessEmbed('Trusted Seller', 'You have been granted the Trusted Seller role on DevVault. Thanks for being a valued member of the community.')] }); }
+  try { await target.user.send({ embeds: [buildSuccessEmbed('Trusted Seller', 'You have been granted the Trusted Seller role on DevVault.')] }); }
   catch { /* DMs off */ }
 
   const { logMod } = await import('../utils/logger.js');
@@ -305,49 +337,51 @@ async function handleGrantTrustedSeller(interaction: ChatInputCommandInteraction
   await interaction.editReply({ embeds: [buildSuccessEmbed('Done', `Trusted Seller role granted to <@${target.id}>.`)] });
 }
 
-// ─── /audit-log ───────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// /audit-log
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function handleAuditLog(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   const { query } = await import('../db/index.js');
   const res = await query(`SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 20`);
-  if (!res.rows.length) { await interaction.editReply({ embeds: [buildInfoEmbed('Audit Log', 'No recent audit entries.')] }); return; }
+  if (!res.rows.length) {
+    await interaction.editReply({ embeds: [buildInfoEmbed('Audit Log', 'No recent audit entries.')] });
+    return;
+  }
   const lines = res.rows.map((r: { event_type: string; detail: string; error_code: string; created_at: Date }) =>
     `**${r.event_type}** | <t:${Math.floor(new Date(r.created_at).getTime() / 1000)}:d> | ${r.detail || ''} ${r.error_code ? `(${r.error_code})` : ''}`
   ).join('\n');
   await interaction.editReply({
-    embeds: [new EmbedBuilder().setColor(config.colours.system).setTitle('Audit Log').setDescription(lines.slice(0, 4000)).setFooter({ text: 'DevVault' })]
+    embeds: [new EmbedBuilder().setColor(config.colours.system).setTitle('Audit Log').setDescription(lines.slice(0, 4000)).setFooter({ text: 'DevVault' })],
   });
 }
 
-// ─── /get-delivery ──────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// /get-delivery
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function handleGetDelivery(interaction: ChatInputCommandInteraction): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
   const postIdRaw = interaction.options.getString('post_id', true).toUpperCase();
-
-  const { getPost } = await import('../db/helpers.js');
-  const { logMisc } = await import('../utils/logger.js');
-  const { query } = await import('../db/index.js');
+  const { getPost }  = await import('../db/helpers.js');
+  const { logMisc }  = await import('../utils/logger.js');
+  const { query }    = await import('../db/index.js');
 
   const post = await getPost(postIdRaw);
-
   if (!post) {
     await interaction.editReply({ embeds: [buildErrorEmbed('Not Found', `No post found with ID ${postIdRaw}.`)] });
     return;
   }
-
   if (post.post_type !== 'ASSET') {
     await interaction.editReply({ embeds: [buildErrorEmbed('Not an Asset', `${postIdRaw} is a ${post.post_type} post. Delivery links only exist on asset posts.`)] });
     return;
   }
-
   if (!post.asset_delivery) {
     await interaction.editReply({ embeds: [buildErrorEmbed('No Delivery Link', `${postIdRaw} does not have a stored delivery link.`)] });
     return;
   }
 
-  // Log every access
   await query(
     `INSERT INTO audit_log (event_type, detail) VALUES ($1, $2)`,
     ['delivery_link_accessed', `Admin ${interaction.user.tag} (${interaction.user.id}) accessed delivery link for ${postIdRaw}`]
@@ -359,10 +393,10 @@ async function handleGetDelivery(interaction: ChatInputCommandInteraction): Prom
       .setColor(config.colours.system)
       .setTitle(`Delivery Link: ${postIdRaw}`)
       .addFields(
-        { name: 'Post', value: post.title, inline: true },
-        { name: 'Seller', value: `<@${post.user_id}>`, inline: true },
-        { name: 'Status', value: post.status, inline: true },
-        { name: 'Delivery', value: post.asset_delivery, inline: false },
+        { name: 'Post',     value: post.title,               inline: true },
+        { name: 'Seller',   value: `<@${post.user_id}>`,     inline: true },
+        { name: 'Status',   value: post.status,              inline: true },
+        { name: 'Delivery', value: post.asset_delivery,      inline: false },
       )
       .setFooter({ text: `Accessed by ${interaction.user.tag} - this access has been logged` })
       .setTimestamp()
@@ -370,9 +404,9 @@ async function handleGetDelivery(interaction: ChatInputCommandInteraction): Prom
   });
 }
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
-
-// ─── /delete-post ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// /delete-post
+// ─────────────────────────────────────────────────────────────────────────────
 
 async function handleDeletePost(interaction: ChatInputCommandInteraction, client: Client): Promise<void> {
   const postIdOpt = interaction.options.getString('post_id');
@@ -389,7 +423,10 @@ async function handleDeletePost(interaction: ChatInputCommandInteraction, client
   if (postIdOpt) {
     await interaction.deferReply({ ephemeral: true });
     const post = await getPost(postIdOpt.toUpperCase());
-    if (!post) { await interaction.editReply({ embeds: [buildErrorEmbed('Not Found', `No post found with ID ${postIdOpt}.`)] }); return; }
+    if (!post) {
+      await interaction.editReply({ embeds: [buildErrorEmbed('Not Found', `No post found with ID ${postIdOpt}.`)] });
+      return;
+    }
 
     if (post.discord_message_id && post.status === 'live') {
       try {
@@ -418,32 +455,31 @@ async function handleDeletePost(interaction: ChatInputCommandInteraction, client
   }
 
   // User post picker via dropdown
-  const posts = await getUserPosts(userOpt!.id);
+  const posts  = await getUserPosts(userOpt!.id);
   const active = posts.filter(p => ['live', 'pending', 'archived'].includes(p.status));
   if (!active.length) {
     await interaction.reply({ embeds: [buildInfoEmbed('No Posts', `<@${userOpt!.id}> has no active posts.`)], ephemeral: true });
     return;
   }
 
-  const { StringSelectMenuBuilder: SSM, StringSelectMenuOptionBuilder: SSOB, ActionRowBuilder: ARB2 } = await import('discord.js');
+  const { StringSelectMenuBuilder: SSM, StringSelectMenuOptionBuilder: SSOB, ActionRowBuilder: ARB } = await import('discord.js');
   const select = new SSM()
     .setCustomId(`staff_delete_post_${userOpt!.id}`)
     .setPlaceholder('Select a post to delete')
-    .addOptions(
-      active.slice(0, 25).map(p =>
-        new SSOB().setLabel(`${p.post_id} - ${p.title.slice(0, 60)}`).setValue(p.post_id)
-          .setDescription(`${p.post_type} | ${p.status}`)
-      )
-    );
+    .addOptions(active.slice(0, 25).map(p =>
+      new SSOB().setLabel(`${p.post_id} - ${p.title.slice(0, 60)}`).setValue(p.post_id).setDescription(`${p.post_type} | ${p.status}`)
+    ));
 
   await interaction.reply({
     embeds: [buildInfoEmbed('Select Post to Delete', `Choose a post from <@${userOpt!.id}>.`)],
-    components: [new ARB2<InstanceType<typeof SSM>>().addComponents(select)],
+    components: [new ARB<InstanceType<typeof SSM>>().addComponents(select)],
     ephemeral: true,
   });
 }
 
-// ─── /embed ───────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// /embed
+// ─────────────────────────────────────────────────────────────────────────────
 
 const embedSessions = new Map<string, string>();
 
@@ -456,7 +492,7 @@ export function clearEmbedSession(userId: string): void {
 }
 
 async function handleEmbed(interaction: ChatInputCommandInteraction, client: Client): Promise<void> {
-  const guild = await client.guilds.fetch(config.servers.main);
+  const guild    = await client.guilds.fetch(config.servers.main);
   const channels = [...guild.channels.cache.values()]
     .filter(c => c.type === 0)
     .sort((a, b) => a.name.localeCompare(b.name))
@@ -467,15 +503,15 @@ async function handleEmbed(interaction: ChatInputCommandInteraction, client: Cli
     return;
   }
 
-  const { StringSelectMenuBuilder: SSM2, StringSelectMenuOptionBuilder: SSOB2, ActionRowBuilder: ARB3 } = await import('discord.js');
-  const select = new SSM2()
+  const { StringSelectMenuBuilder: SSM, StringSelectMenuOptionBuilder: SSOB, ActionRowBuilder: ARB } = await import('discord.js');
+  const select = new SSM()
     .setCustomId('embed_channel_select')
     .setPlaceholder('Choose a channel')
-    .addOptions(channels.map(c => new SSOB2().setLabel(`# ${c.name}`).setValue(c.id)));
+    .addOptions(channels.map(c => new SSOB().setLabel(`# ${c.name}`).setValue(c.id)));
 
   await interaction.reply({
     embeds: [buildInfoEmbed('Send Embed', 'Pick the channel to send the embed to.')],
-    components: [new ARB3<InstanceType<typeof SSM2>>().addComponents(select)],
+    components: [new ARB<InstanceType<typeof SSM>>().addComponents(select)],
     ephemeral: true,
   });
 }
@@ -491,7 +527,7 @@ export async function handleEmbedChannelSelect(
   await interaction.update({
     embeds: [buildInfoEmbed(
       'Send Your Content',
-      `Channel: <#${channelId}>\n\nSend your next message in this server channel and it will be posted as an embed in **#${channel?.name ?? channelId}**. Markdown supported. Type **cancel** to stop.`
+      `Channel: <#${channelId}>\n\nSend your next message in this server and it will be posted as an embed in **#${channel?.name ?? channelId}**. Markdown is supported. Type **cancel** to stop.`
     )],
     components: [],
   });
@@ -523,7 +559,9 @@ export async function handleEmbedContent(message: import('discord.js').Message, 
   }
 }
 
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
 
 function parseDuration(str: string): number | null {
   const m = str.match(/^(\d+)(h|d|w)$/i);
