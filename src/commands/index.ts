@@ -104,11 +104,13 @@ const staffServerCommands = [
 ].map(c => c.toJSON());
 
 // ─────────────────────────────────────────────────────────────────────────────
-// APPEALS SERVER COMMANDS — ticket only + embed for admins
+// APPEALS SERVER COMMANDS — /ticket, /mylogs, admin commands only
 // ─────────────────────────────────────────────────────────────────────────────
 const appealsServerCommands = [
   new SlashCommandBuilder().setName('ticket').setDescription('Open an appeal ticket'),
+  new SlashCommandBuilder().setName('mylogs').setDescription('View your own moderation history'),
   new SlashCommandBuilder().setName('embed').setDescription('Send a custom embed to a channel (Admin only)'),
+  new SlashCommandBuilder().setName('audit-log').setDescription('View system audit log (Admin only)'),
 ].map(c => c.toJSON());
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -118,13 +120,25 @@ const appealsServerCommands = [
 export async function registerCommands(): Promise<void> {
   const rest = new REST().setToken(config.token);
   try {
-    // Global: works in DMs and all servers
-    await rest.put(Routes.applicationCommands(config.clientId), { body: globalCommands });
-    // Per-server filtered command sets
-    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.main),    { body: mainServerCommands });
-    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.staff),   { body: staffServerCommands });
+    // Step 1: wipe all global commands (clears any stale registrations from previous deploys)
+    console.log('[CMD] Clearing global commands...');
+    await rest.put(Routes.applicationCommands(config.clientId), { body: [] });
+    console.log('[CMD] Global commands cleared.');
+
+    // Step 2: register per-server command sets
+    console.log('[CMD] Registering main server commands...');
+    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.main), { body: mainServerCommands });
+    console.log(`[CMD] Main server: ${mainServerCommands.length} commands registered.`);
+
+    console.log('[CMD] Registering staff server commands...');
+    await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.staff), { body: staffServerCommands });
+    console.log(`[CMD] Staff server: ${staffServerCommands.length} commands registered.`);
+
+    console.log('[CMD] Registering appeals server commands...');
     await rest.put(Routes.applicationGuildCommands(config.clientId, config.servers.appeals), { body: appealsServerCommands });
-    console.log('[CMD] Commands registered: global + main + staff + appeals.');
+    console.log(`[CMD] Appeals server: ${appealsServerCommands.length} commands registered.`);
+
+    console.log('[CMD] All command sets registered successfully.');
   } catch (err: unknown) {
     console.error('[CMD] Failed to register commands:', err instanceof Error ? err.message : err);
   }
