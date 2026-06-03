@@ -42,6 +42,9 @@ export const config = {
       moderator:        '1509358643341037578',
       marketplaceStaff: '1509358675318538300',
     },
+    appeals: {
+      admin: '1511508146693079111',
+    },
   },
 
   channels: {

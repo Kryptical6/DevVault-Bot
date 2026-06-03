@@ -235,8 +235,10 @@ export async function handleTicketEscalate(interaction: ButtonInteraction, ticke
   const ticket = await getTicketByChannel(interaction.channelId);
   if (!ticket) return;
 
+  // Ping the staff server admin role so they see this immediately
   await (interaction.channel as TextChannel).send({
-    embeds: [buildInfoEmbed('Escalated', `Escalated by <@${interaction.user.id}>. This ticket needs senior staff attention.`)]
+    content: `<@&${config.roles.staff.admin}>`,
+    embeds: [buildInfoEmbed('Escalated', `Escalated by <@${interaction.user.id}>. This ticket requires Admin attention.`)],
   });
 
   await logTicket({ action: 'Escalated', ticketId, userId: ticket.user_id, userTag: ticket.user_id, type: ticket.ticket_type, staffId: interaction.user.id });

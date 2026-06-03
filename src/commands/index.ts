@@ -98,6 +98,7 @@ const staffServerCommands = [
 // APPEALS SERVER COMMANDS — ticket only + embed for admins
 // ─────────────────────────────────────────────────────────────────────────────
 const appealsServerCommands = [
+  new SlashCommandBuilder().setName('ticket').setDescription('Open an appeal ticket'),
   new SlashCommandBuilder().setName('embed').setDescription('Send a custom embed to a channel (Admin only)'),
 ].map(c => c.toJSON());
 
@@ -146,6 +147,32 @@ function isMpStaff(member: GuildMember): boolean {
 
 export async function handleCommand(interaction: ChatInputCommandInteraction, client: Client): Promise<void> {
   const cmd = interaction.commandName;
+
+  // Appeals server: only /ticket (anyone) and /embed (appeals admin only)
+  if (interaction.guild?.id === config.servers.appeals) {
+    const member = interaction.member as GuildMember;
+    const isAppealsAdmin = member.roles.cache.has(config.roles.appeals.admin);
+
+    if (cmd === 'ticket') {
+      await interaction.reply({ embeds: [buildInfoEmbed('Opening Ticket', "Your appeal ticket is being created. Check your DMs.")], ephemeral: true });
+      const { routeDmCommand } = await import('../workflows/postWorkflow.js');
+      await routeDmCommand(interaction.user, 'ticket', client);
+      return;
+    }
+
+    if (cmd === 'embed') {
+      if (!isAppealsAdmin) {
+        await interaction.reply({ embeds: [buildErrorEmbed('No Permission', 'This command requires Admin.')], ephemeral: true });
+        return;
+      }
+      await handleEmbed(interaction, client);
+      return;
+    }
+
+    // Block every other command in appeals server
+    await interaction.reply({ embeds: [buildErrorEmbed('Not Available', 'Use `/ticket` to open an appeal.')], ephemeral: true });
+    return;
+  }
 
   // Global user commands — work in DMs and servers.
   // When used in a server they redirect the user to DMs.
