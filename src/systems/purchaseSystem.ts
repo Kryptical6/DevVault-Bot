@@ -2,9 +2,8 @@
 // DEVVAULT — PURCHASE SYSTEM
 // ─────────────────────────────────────────────────────────────────────────────
 import {
-  Client, ButtonInteraction, ModalSubmitInteraction, TextChannel,
-  ActionRowBuilder, ButtonBuilder, ButtonStyle,
-  ModalBuilder, TextInputBuilder, TextInputStyle, ModalActionRowComponentBuilder
+  Client, ButtonInteraction, Message, TextChannel,
+  ActionRowBuilder, ButtonBuilder, ButtonStyle
 } from 'discord.js';
 import { config, assetCategoryMap } from '../config/index.js';
 import {
@@ -17,7 +16,7 @@ import { logPost } from '../utils/logger.js';
 let purchaseClient: Client | null = null;
 export function setPurchaseClient(c: Client): void { purchaseClient = c; }
 
-// Track buyers awaiting proof: userId -> purchaseId
+// userId -> purchaseId (awaiting proof DM)
 const awaitingProof = new Map<string, string>();
 
 // ─── BUY ASSET ────────────────────────────────────────────────────────────────
@@ -40,7 +39,7 @@ export async function handleBuyAsset(interaction: ButtonInteraction, postId: str
 
   const paymentLine = post.payment_link ? `\n\n**Payment Link:** ${post.payment_link}` : '';
   await interaction.editReply({
-    embeds: [buildInfoEmbed('Purchase Initiated', `Purchase initiated for: **${post.title}**\n\nPlease submit proof of payment to continue.${paymentLine}`)],
+    embeds: [buildInfoEmbed('Purchase Initiated', `Purchase initiated for **${post.title}**.${paymentLine}\n\nOnce you have paid, click below to submit your proof.`)],
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId(`submit_purchase_proof_${postId}`).setLabel('Submit Proof of Payment').setStyle(ButtonStyle.Primary)
     )],
@@ -48,39 +47,59 @@ export async function handleBuyAsset(interaction: ButtonInteraction, postId: str
   await logPost({ action: 'Purchase Initiated', postId, userId: interaction.user.id, username: interaction.user.tag });
 }
 
-// ─── SUBMIT PURCHASE PROOF ────────────────────────────────────────────────────
+// ─── SUBMIT PURCHASE PROOF (button) ──────────────────────────────────────────
 
 export async function handleSubmitPurchaseProof(interaction: ButtonInteraction, postId: string): Promise<void> {
-  await interaction.showModal(
-    new ModalBuilder().setCustomId(`purchase_proof_modal_${postId}`).setTitle('Submit Payment Proof').addComponents(
-      new ActionRowBuilder<ModalActionRowComponentBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('proof_link').setLabel('Proof of payment (screenshot/recording URL)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(500)
-      )
-    )
-  );
+  // Instead of a modal, ask the user to send a DM with their proof
+  await interaction.reply({
+    embeds: [buildInfoEmbed(
+      'Submit Payment Proof',
+      'Please send your proof of payment as your next DM to this bot.\n\nYou can:\n- **Upload a file** (screenshot, screen recording)\n- **Paste a direct link** (e.g. a CDN or video URL)\n\nSend your message now.'
+    )],
+    ephemeral: true,
+  });
 }
 
-export async function handlePurchaseProofModal(interaction: ModalSubmitInteraction, postId: string): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
-  if (!purchaseClient) return;
+// Called from routeDMMessage when a user has an awaiting purchase proof
+export async function handlePurchaseProofDm(message: Message): Promise<boolean> {
+  if (!purchaseClient) return false;
+  const purchaseId = awaitingProof.get(message.author.id);
+  if (!purchaseId) return false;
 
-  const proofLink  = interaction.fields.getTextInputValue('proof_link');
-  const purchaseId = awaitingProof.get(interaction.user.id);
-  if (!purchaseId) { await interaction.editReply({ embeds: [buildErrorEmbed('Error', 'No active purchase found. Please use Buy Asset to start again.')] }); return; }
+  // Resolve proof: attachment CDN URL takes priority, then message content as a link
+  const attachment = message.attachments.first();
+  const proofRef   = attachment?.url ?? message.content.trim();
 
-  await updatePurchase(purchaseId, { status: 'proof_submitted', proof_ref: proofLink });
+  if (!proofRef) {
+    await message.reply({ embeds: [buildErrorEmbed('No Proof Detected', 'Please send a file attachment or a valid link.')] });
+    return true;
+  }
 
-  const post = await getPost(postId);
-  if (!post) return;
+  awaitingProof.delete(message.author.id);
 
-  const cat           = Object.values(assetCategoryMap).find(c => c.label === post.category);
+  const purchase = await getPurchase(purchaseId);
+  if (!purchase) {
+    await message.reply({ embeds: [buildErrorEmbed('Error', 'Purchase session expired. Please use Buy Asset again.')] });
+    return true;
+  }
+
+  await updatePurchase(purchaseId, { status: 'proof_submitted', proof_ref: proofRef });
+
+  const post = await getPost(purchase.post_id);
+  if (!post) return true;
+
+  const cat            = Object.values(assetCategoryMap).find(c => c.label === post.category);
   const staffChannelId = cat?.staffChannel ?? config.channels.staff.assets.systems;
-  const staffChannel  = await purchaseClient.channels.fetch(staffChannelId) as TextChannel;
+  const staffChannel   = await purchaseClient.channels.fetch(staffChannelId) as TextChannel;
+
+  const proofDisplay = attachment
+    ? `[Attachment](${proofRef})`
+    : proofRef;
 
   await staffChannel.send({
     embeds: [buildInfoEmbed(
-      `Purchase Proof: ${post.post_id}`,
-      `**Asset:** ${post.title}\n**Buyer:** <@${interaction.user.id}>\n**Seller:** <@${post.user_id}>\n**Proof:** ${proofLink}\n\n-# Purchase ID: ${purchaseId}`
+      `Purchase Proof | ${post.post_id}`,
+      `**Asset:** ${post.title}\n**Buyer:** <@${purchase.buyer_id}>\n**Seller:** <@${purchase.seller_id}>\n**Proof:** ${proofDisplay}\n\n-# Purchase ID: ${purchaseId}`
     )],
     components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setCustomId(`purchase_approve_${purchaseId}`).setLabel('Approve Payment').setStyle(ButtonStyle.Success),
@@ -88,9 +107,9 @@ export async function handlePurchaseProofModal(interaction: ModalSubmitInteracti
     )],
   });
 
-  awaitingProof.delete(interaction.user.id);
-  await interaction.editReply({ embeds: [buildSuccessEmbed('Proof Submitted', 'Your payment proof has been submitted and is being reviewed.')] });
-  await logPost({ action: 'Purchase Proof Submitted', postId, userId: interaction.user.id, username: interaction.user.tag });
+  await message.reply({ embeds: [buildSuccessEmbed('Proof Submitted', 'Your payment proof has been submitted and is being reviewed.')] });
+  await logPost({ action: 'Purchase Proof Submitted', postId: post.post_id, userId: message.author.id, username: message.author.tag, extra: `Link: ${proofRef}` });
+  return true;
 }
 
 // ─── APPROVE PAYMENT ─────────────────────────────────────────────────────────
@@ -108,7 +127,7 @@ export async function handlePurchaseApprove(interaction: ButtonInteraction, purc
     const seller = await purchaseClient.users.fetch(purchase.seller_id);
     const post   = await getPost(purchase.post_id);
     await seller.send({
-      embeds: [buildInfoEmbed('Payment Confirmation Required', `A buyer has submitted payment for: **${post?.title ?? purchase.post_id}**\n\nPlease confirm whether payment was received.`)],
+      embeds: [buildInfoEmbed('Payment Confirmation Required', `A buyer has submitted payment for **${post?.title ?? purchase.post_id}**.\n\nPlease confirm whether you received the payment.`)],
       components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder().setCustomId(`seller_confirm_${purchaseId}`).setLabel('Payment Received').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(`seller_missing_${purchaseId}`).setLabel('Payment Missing').setStyle(ButtonStyle.Danger),
@@ -131,7 +150,7 @@ export async function handlePurchaseDeny(interaction: ButtonInteraction, purchas
   if (!purchase) { await interaction.editReply({ embeds: [buildErrorEmbed('Error', 'Purchase not found.')] }); return; }
 
   await updatePurchase(purchaseId, { status: 'cancelled' });
-  try { await (await purchaseClient.users.fetch(purchase.buyer_id)).send({ embeds: [buildErrorEmbed('Payment Not Verified', 'Payment could not be verified. No delivery will be made.')] }); }
+  try { await (await purchaseClient.users.fetch(purchase.buyer_id)).send({ embeds: [buildErrorEmbed('Payment Not Verified', 'Your payment proof could not be verified. No delivery will be made. If you believe this is an error, please open a ticket.')] }); }
   catch { /* DMs off */ }
 
   await interaction.message.delete().catch(() => null);
@@ -155,17 +174,16 @@ export async function handleSellerConfirm(interaction: ButtonInteraction, purcha
     const buyer = await purchaseClient.users.fetch(purchase.buyer_id);
     if (post?.asset_delivery?.startsWith('http')) {
       await buyer.send({
-        embeds: [buildSuccessEmbed('Asset Delivered', 'Your asset has been delivered successfully.')],
+        embeds: [buildSuccessEmbed('Asset Delivered', 'Your asset has been delivered.')],
         components: [new ActionRowBuilder<ButtonBuilder>().addComponents(new ButtonBuilder().setLabel('Download / View').setStyle(ButtonStyle.Link).setURL(post.asset_delivery))],
       });
     } else if (post?.asset_delivery) {
-      await buyer.send({ embeds: [buildSuccessEmbed('Asset Delivered', `Your asset has been delivered successfully.\n\n**Delivery Reference:** ${post.asset_delivery}`)] });
+      await buyer.send({ embeds: [buildSuccessEmbed('Asset Delivered', `Your asset has been delivered.\n\n**Reference:** ${post.asset_delivery}`)] });
     } else {
       await buyer.send({ embeds: [buildSuccessEmbed('Payment Confirmed', 'Payment confirmed. Your asset is being delivered.')] });
     }
   } catch { /* DMs off */ }
 
-  // Archive single-sale listings
   if (post?.sale_mode === 'single') {
     try {
       if (post.discord_message_id) {
@@ -206,7 +224,7 @@ export async function handleSellerMissing(interaction: ButtonInteraction, purcha
     await channel.send({
       embeds: [buildInfoEmbed(
         'Payment Dispute',
-        `**Seller:** <@${purchase.seller_id}>\n**Buyer:** <@${purchase.buyer_id}>\n**Asset:** ${post?.title ?? purchase.post_id}\n\nSeller reported payment not received. Staff investigation required.\n\n*Admin+ can access the asset delivery reference to manually deliver if seller is found dishonest.*`
+        `**Seller:** <@${purchase.seller_id}>\n**Buyer:** <@${purchase.buyer_id}>\n**Asset:** ${post?.title ?? purchase.post_id}\n\nSeller reported payment not received. Staff investigation required.\n\nAdmin+ can use \`/get-delivery\` to access the asset delivery link if the seller is found to be acting in bad faith.`
       )],
     });
   } catch { /* ignore */ }

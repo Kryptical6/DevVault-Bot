@@ -3,12 +3,14 @@ import {
   handleReviewApprove, handleReviewDeny, handleReviewProofOwnership,
   handleReviewProofFunds, handleReviewModerate,
   handleDenyReasonsSelect, handleDenyOtherModal, handleDenyCustomModal,
-  handleModerateModal, handleModerateReasonSelect, handleProofSubmission, handleProofSubmitModal,
-  handleProofApprove, handleProofDeny
+  handleModerateModal, handleModerateReasonSelect,
+  handleProofSubmission, handleProofApprove, handleProofDeny,
+  handleProofDm, handleEvidenceMessage
 } from '../systems/reviewSystem.js';
 import {
-  handleBuyAsset, handleSubmitPurchaseProof, handlePurchaseProofModal,
-  handlePurchaseApprove, handlePurchaseDeny, handleSellerConfirm, handleSellerMissing
+  handleBuyAsset, handleSubmitPurchaseProof,
+  handlePurchaseApprove, handlePurchaseDeny, handleSellerConfirm, handleSellerMissing,
+  handlePurchaseProofDm
 } from '../systems/purchaseSystem.js';
 import {
   handleTicketClaim, handleTicketClose, handleTicketEscalate
@@ -224,10 +226,6 @@ async function routeModal(interaction: ModalSubmitInteraction, client: Client): 
     return handleModerateModal(interaction, targetId, encodedReason);
   }
 
-  // Proof submit modals
-  if (id.startsWith('proof_submit_modal_ownership_')) return handleProofSubmitModal(interaction, 'ownership', id.replace('proof_submit_modal_ownership_', ''));
-  if (id.startsWith('proof_submit_modal_funds_')) return handleProofSubmitModal(interaction, 'funds', id.replace('proof_submit_modal_funds_', ''));
-
   // Purchase proof modal
   if (id.startsWith('purchase_proof_modal_')) return handlePurchaseProofModal(interaction, id.replace('purchase_proof_modal_', ''));
 
@@ -240,6 +238,13 @@ async function routeModal(interaction: ModalSubmitInteraction, client: Client): 
 export async function routeDMMessage(message: import('discord.js').Message, client: Client): Promise<void> {
   const { mirrorToStaff } = await import('../systems/ticketSystem.js');
   await mirrorToStaff(message);
+
+  // Check proof submissions first (they take priority over workflow steps)
+  const proofHandled    = await handleProofDm(message);
+  if (proofHandled) return;
+  const purchaseHandled = await handlePurchaseProofDm(message);
+  if (purchaseHandled) return;
+
   await handleDmMessage(message);
 }
 

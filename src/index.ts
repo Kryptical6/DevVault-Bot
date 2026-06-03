@@ -8,6 +8,7 @@ import { initDb } from './db/index.js';
 import { setLogClient } from './utils/logger.js';
 import { registerCommands, handleCommand } from './commands/index.js';
 import { routeInteraction, routeDMMessage, routeServerMessage } from './events/interactionRouter.js';
+import { handleEvidenceMessage } from './systems/reviewSystem.js';
 import { setPostWorkflowClient } from './workflows/postWorkflow.js';
 import { setTicketClient, mirrorToUser } from './systems/ticketSystem.js';
 import { setReviewClient } from './systems/reviewSystem.js';
@@ -93,6 +94,9 @@ client.on(Events.MessageCreate, async (message) => {
     }
     if (message.guild?.id === config.servers.staff) {
       await mirrorToUser(message);
+      // Handle evidence uploads from staff moderators
+      const evidenceHandled = await handleEvidenceMessage(message);
+      if (evidenceHandled) return;
     }
     // Handle /embed content from any server channel
     await routeServerMessage(message, client);

@@ -2,7 +2,7 @@
 // DEVVAULT — REVIEW SYSTEM
 // ─────────────────────────────────────────────────────────────────────────────
 import {
-  Client, TextChannel, ButtonInteraction, ModalSubmitInteraction,
+  Client, TextChannel, Message, ButtonInteraction, ModalSubmitInteraction,
   StringSelectMenuInteraction, ActionRowBuilder, ButtonBuilder, ButtonStyle,
   StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle, ModalActionRowComponentBuilder,
@@ -370,46 +370,96 @@ export async function handleReviewProofFunds(interaction: ButtonInteraction, tar
 }
 
 // ─── PROOF SUBMISSION ─────────────────────────────────────────────────────────
+// userId -> { targetId, proofType } — waiting for a DM with file or link
+const pendingProofSessions = new Map<string, { targetId: string; proofType: 'ownership' | 'funds' }>();
 
-export async function handleProofSubmission(interaction: ButtonInteraction, targetId: string, proofType: 'ownership' | 'funds'): Promise<void> {
-  await interaction.showModal(
-    new ModalBuilder().setCustomId(`proof_submit_modal_${proofType}_${targetId}`).setTitle('Submit Proof').addComponents(
-      new ActionRowBuilder<ModalActionRowComponentBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('proof_link').setLabel('Proof link (video/recording URL)').setStyle(TextInputStyle.Short).setRequired(true).setMaxLength(500)
-      )
-    )
-  );
+export function hasPendingProof(userId: string): boolean {
+  return pendingProofSessions.has(userId);
 }
 
-export async function handleProofSubmitModal(interaction: ModalSubmitInteraction, proofType: 'ownership' | 'funds', targetId: string): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
-  const proofLink = interaction.fields.getTextInputValue('proof_link');
-  const req = await getProofRequest(targetId);
-  if (!req) { await interaction.editReply({ embeds: [buildErrorEmbed('Error', 'No active proof request found.')] }); return; }
+export async function handleProofSubmission(interaction: ButtonInteraction, targetId: string, proofType: 'ownership' | 'funds'): Promise<void> {
+  if (!reviewClient) return;
+  pendingProofSessions.set(interaction.user.id, { targetId, proofType });
 
-  await updateProofRequest(req.proof_id, { submitted_at: new Date(), proof_ref: proofLink });
+  const label = proofType === 'ownership' ? 'ownership proof' : 'proof of funds';
+  const hint  = proofType === 'ownership'
+    ? 'Upload a screen recording or screenshots showing your project files and creation process.'
+    : 'Upload a screen recording showing your available balance and a page refresh.';
 
-  if (req.proof_ref && reviewClient) {
-    try {
-      const { ThreadChannel } = await import('discord.js');
-      const thread = await reviewClient.channels.fetch(req.proof_ref);
-      if (thread && 'setLocked' in thread) {
-        await (thread as import('discord.js').ThreadChannel).setLocked(false);
-        await (thread as import('discord.js').ThreadChannel).send({
-          embeds: [new EmbedBuilder().setColor(config.colours.proofRequest).setTitle('Proof Submitted').setDescription(`Submitted by <@${interaction.user.id}>\n\n**Link:** ${proofLink}`).setFooter({ text: `DevVault | ${targetId}` }).setTimestamp()],
-          components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
-            new ButtonBuilder().setCustomId(`proof_approve_${targetId}`).setLabel('Approve Proof').setStyle(ButtonStyle.Success),
-            new ButtonBuilder().setCustomId(`proof_deny_${targetId}`).setLabel('Deny Proof').setStyle(ButtonStyle.Danger),
-          )],
-        });
-        await (thread as import('discord.js').ThreadChannel).setLocked(true);
-        await (thread as import('discord.js').ThreadChannel).send(`<@${req.requested_by}> Proof submitted for **${targetId}**.`);
-      }
-    } catch { /* ignore */ }
+  try {
+    const user = await reviewClient.users.fetch(interaction.user.id);
+    await user.send({
+      embeds: [buildInfoEmbed(
+        'Submit Your Proof',
+        `Send your ${label} as your next message here.\n\n${hint}\n\nYou can:\n- **Upload a file** directly (image, video, zip)\n- **Paste a direct link** (CDN, Google Drive, YouTube etc.)\n\nType **cancel** to cancel.`
+      )],
+    });
+    await interaction.reply({ embeds: [buildInfoEmbed('Check Your DMs', 'I have sent you a message. Please reply there with your proof.')], ephemeral: true });
+  } catch {
+    await interaction.reply({ embeds: [buildErrorEmbed('DMs Closed', 'Please open your DMs to this bot and try again.')], ephemeral: true });
+    pendingProofSessions.delete(interaction.user.id);
+  }
+}
+
+// Called from routeDMMessage
+export async function handleProofDm(message: Message): Promise<boolean> {
+  const session = pendingProofSessions.get(message.author.id);
+  if (!session) return false;
+
+  if (message.content.trim().toLowerCase() === 'cancel') {
+    pendingProofSessions.delete(message.author.id);
+    await message.reply({ embeds: [buildInfoEmbed('Cancelled', 'Proof submission cancelled.')] });
+    return true;
   }
 
-  await logPost({ action: `Proof ${proofType} Submitted`, postId: targetId, userId: interaction.user.id, username: interaction.user.tag, extra: `Link: ${proofLink}` });
-  await interaction.editReply({ embeds: [buildSuccessEmbed('Proof Submitted', 'Your proof has been submitted and is under review.')] });
+  const attachment = message.attachments.first();
+  const proofRef   = attachment?.url ?? message.content.trim();
+
+  if (!proofRef) {
+    await message.reply({ embeds: [buildErrorEmbed('No Proof Detected', 'Please send a file attachment or a valid link.')] });
+    return true;
+  }
+
+  pendingProofSessions.delete(message.author.id);
+
+  const req = await getProofRequest(session.targetId);
+  if (!req) {
+    await message.reply({ embeds: [buildErrorEmbed('Expired', 'No active proof request found. It may have expired.')] });
+    return true;
+  }
+
+  await updateProofRequest(req.proof_id, { submitted_at: new Date(), proof_ref: proofRef });
+
+  const proofDisplay = attachment ? `[Attachment](${proofRef})` : proofRef;
+
+  if (reviewClient) {
+    try {
+      const thread = await reviewClient.channels.fetch(req.thread_id ?? '');
+      if (thread && 'send' in thread) {
+        const tc = thread as import('discord.js').ThreadChannel;
+        await tc.setLocked(false);
+        await tc.send({
+          embeds: [new EmbedBuilder()
+            .setColor(config.colours.proofRequest)
+            .setTitle('Proof Submitted')
+            .setDescription(`Submitted by <@${message.author.id}>\n\n**Proof:** ${proofDisplay}`)
+            .setFooter({ text: `DevVault | ${session.targetId}` })
+            .setTimestamp()
+          ],
+          components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder().setCustomId(`proof_approve_${session.targetId}`).setLabel('Approve Proof').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId(`proof_deny_${session.targetId}`).setLabel('Deny Proof').setStyle(ButtonStyle.Danger),
+          )],
+        });
+        await tc.setLocked(true);
+        await tc.send(`<@${req.requested_by}> Proof submitted for **${session.targetId}**.`);
+      }
+    } catch { /* thread gone */ }
+  }
+
+  await logPost({ action: `Proof ${session.proofType} Submitted`, postId: session.targetId, userId: message.author.id, username: message.author.tag, extra: `Link: ${proofRef}` });
+  await message.reply({ embeds: [buildSuccessEmbed('Proof Submitted', 'Your proof has been submitted and is under review.')] });
+  return true;
 }
 
 export async function handleProofApprove(interaction: ButtonInteraction, targetId: string): Promise<void> {
@@ -494,8 +544,14 @@ export async function handleReviewModerate(interaction: ButtonInteraction, targe
   });
 }
 
+// userId -> { targetId, reason, explanation } — waiting for evidence upload
+const pendingEvidenceSessions = new Map<string, { targetId: string; reason: string; explanation: string }>();
+
+export function hasPendingEvidence(userId: string): boolean {
+  return pendingEvidenceSessions.has(userId);
+}
+
 export async function handleModerateReasonSelect(interaction: StringSelectMenuInteraction, targetId: string): Promise<void> {
-  // Step 2: after selecting reason, show modal for explanation + evidence
   const reason = interaction.values[0];
   await interaction.showModal(
     new ModalBuilder().setCustomId(`moderate_modal_${targetId}__${encodeURIComponent(reason)}`).setTitle('Moderation Details').addComponents(
@@ -503,25 +559,55 @@ export async function handleModerateReasonSelect(interaction: StringSelectMenuIn
         new TextInputBuilder().setCustomId('explanation').setLabel('Explanation').setStyle(TextInputStyle.Paragraph)
           .setRequired(true).setMaxLength(1000)
           .setPlaceholder('Describe what was found and why this is an issue.')
-      ),
-      new ActionRowBuilder<ModalActionRowComponentBuilder>().addComponents(
-        new TextInputBuilder().setCustomId('evidence').setLabel('Evidence (links, screenshots)').setStyle(TextInputStyle.Paragraph)
-          .setRequired(false).setMaxLength(500)
-          .setPlaceholder('Optional: paste links to evidence.')
       )
     )
   );
 }
 
 export async function handleModerateModal(interaction: ModalSubmitInteraction, targetId: string, encodedReason: string): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
-  if (!reviewClient) return;
-
   const reason      = decodeURIComponent(encodedReason);
   const explanation = interaction.fields.getTextInputValue('explanation');
-  const evidence    = interaction.fields.getTextInputValue('evidence') || '';
-  const isApp       = targetId.startsWith('APP-');
-  let userId        = '';
+
+  // Store session and ask for evidence upload in the channel
+  pendingEvidenceSessions.set(interaction.user.id, { targetId, reason, explanation });
+
+  await interaction.reply({
+    embeds: [buildInfoEmbed(
+      'Submit Evidence',
+      'Send your evidence as your next message in this channel.\n\nYou can:\n- **Upload files** directly (screenshots, recordings, zips)\n- **Paste links** to evidence\n\nType **skip** if there is no additional evidence.'
+    )],
+    ephemeral: true,
+  });
+}
+
+// Called from the staff server message handler in index.ts
+export async function handleEvidenceMessage(message: Message): Promise<boolean> {
+  const session = pendingEvidenceSessions.get(message.author.id);
+  if (!session) return false;
+  if (message.author.bot) return false;
+  // Only process in staff server
+  if (message.guild?.id !== config.servers.staff) return false;
+
+  pendingEvidenceSessions.delete(message.author.id);
+
+  const skipped    = message.content.trim().toLowerCase() === 'skip';
+  const attachment = message.attachments.first();
+  const evidence   = skipped ? '' : (attachment?.url ?? message.content.trim());
+
+  await processModerateCase(message, session.targetId, session.reason, session.explanation, evidence);
+  return true;
+}
+
+async function processModerateCase(
+  source: Message,
+  targetId: string,
+  reason: string,
+  explanation: string,
+  evidence: string
+): Promise<void> {
+  if (!reviewClient) return;
+  const isApp = targetId.startsWith('APP-');
+  let userId  = '';
 
   if (isApp) { const app = await getApplication(targetId); if (app) { await updateApplicationStatus(targetId, 'moderated'); userId = app.user_id; } }
   else       { const post = await getPost(targetId);        if (post) { await updatePostStatus(targetId, 'moderated'); userId = post.user_id; } }
@@ -529,21 +615,33 @@ export async function handleModerateModal(interaction: ModalSubmitInteraction, t
   await query(
     `INSERT INTO suspensions (target_id,target_type,suspended_by,moderation_reason,evidence,explanation)
      VALUES ($1,$2,$3,$4,$5,$6)`,
-    [targetId, isApp ? 'application' : 'post', interaction.user.id, reason, evidence, explanation]
+    [targetId, isApp ? 'application' : 'post', source.author.id, reason, evidence, explanation]
   );
 
   let threadId: string | null = null;
+
+  // Find the original review message to start the thread on
+  // The thread is started from the channel message, not the staff interaction
+  // so we post a standalone case thread in the same channel
   try {
-    const thread = await interaction.message?.startThread({ name: `Moderate: ${targetId}`, autoArchiveDuration: 4320 });
+    const caseEmbed = new EmbedBuilder()
+      .setColor(config.colours.moderation)
+      .setTitle(`Moderation Case | ${targetId}`)
+      .addFields([
+        { name: 'Reason',      value: reason,             inline: false },
+        { name: 'Explanation', value: explanation,        inline: false },
+        { name: 'Evidence',    value: evidence || 'None', inline: false },
+        { name: 'Opened by',   value: `<@${source.author.id}>`, inline: true },
+      ])
+      .setFooter({ text: `DevVault | ${targetId}` })
+      .setTimestamp();
+
+    const caseMsg = await source.channel.send({ embeds: [caseEmbed] });
+    const thread  = await caseMsg.startThread({ name: `Case: ${targetId}`, autoArchiveDuration: 4320 });
     if (thread) {
       await thread.setLocked(true);
       await thread.send({
-        embeds: [new EmbedBuilder().setColor(config.colours.moderation).setTitle('Moderation Case Opened').addFields([
-          { name: 'Reason',      value: reason,             inline: false },
-          { name: 'Explanation', value: explanation,        inline: false },
-          { name: 'Evidence',    value: evidence || 'None', inline: false },
-          { name: 'Opened by',   value: `<@${interaction.user.id}>`, inline: true },
-        ]).setFooter({ text: `DevVault | ${targetId}` }).setTimestamp()],
+        embeds: [buildInfoEmbed('Punishment Options', 'Select the outcome for this moderation case.')],
         components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
           ...config.moderationPunishments.map(p =>
             new ButtonBuilder().setCustomId(`mod_punish_${p.id}_${targetId}`).setLabel(p.label).setStyle(ButtonStyle.Danger)
@@ -557,8 +655,7 @@ export async function handleModerateModal(interaction: ModalSubmitInteraction, t
   if (userId) {
     try { await (await reviewClient.users.fetch(userId)).send({ embeds: [buildModerationHoldEmbed(targetId)] }); }
     catch { /* DMs off */ }
-
-    const req = await createProofRequest({ targetId, targetType: isApp ? 'application' : 'post', proofType: 'ownership', requestedBy: interaction.user.id, threadId: threadId ?? undefined });
+    await createProofRequest({ targetId, targetType: isApp ? 'application' : 'post', proofType: 'ownership', requestedBy: source.author.id, threadId: threadId ?? undefined });
     try {
       await (await reviewClient.users.fetch(userId)).send({
         embeds: [buildProofRequestEmbed(targetId, 'ownership')],
@@ -568,8 +665,8 @@ export async function handleModerateModal(interaction: ModalSubmitInteraction, t
     setTimeout(() => void handleProofDeadlineExpiry(targetId), config.proofDeadline);
   }
 
-  await logPost({ action: 'Moderated', postId: targetId, userId, username: userId, actionedBy: interaction.user.id, reason, extra: explanation });
-  await interaction.editReply({ embeds: [buildSuccessEmbed('Case Opened', `Moderation case opened for ${targetId}.`)] });
+  await logPost({ action: 'Moderated', postId: targetId, userId, username: userId, actionedBy: source.author.id, reason, extra: explanation });
+  await source.reply({ embeds: [buildSuccessEmbed('Case Opened', `Moderation case opened for ${targetId}.`)] }).catch(() => null);
 }
 
 export async function handleModeratePunish(interaction: ButtonInteraction, punishId: string, targetId: string): Promise<void> {
