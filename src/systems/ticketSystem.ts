@@ -26,6 +26,24 @@ export async function handleCreateTicket(
 ): Promise<void> {
   if (!ticketClient) return;
 
+  // Block banned users from opening tickets anywhere except the appeals server ticket flow.
+  // Appeals-server tickets are always type 'support' and are handled separately.
+  // Check if the user is banned in the main server.
+  try {
+    const mainGuild = await ticketClient.guilds.fetch(config.servers.main);
+    const ban = await mainGuild.bans.fetch(userId).catch(() => null);
+    if (ban && ticketType !== 'support') {
+      const user = await ticketClient.users.fetch(userId);
+      await user.send({
+        embeds: [buildErrorEmbed('Access Denied', 'You cannot open a ticket of this type while banned. Join the appeals server to contest your ban.')],
+        components: [new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder().setLabel('Appeals Server').setStyle(ButtonStyle.Link).setURL(config.banServerInvite)
+        )],
+      });
+      return;
+    }
+  } catch { /* could not check, proceed */ }
+
   const existing = await getOpenTicketByUser(userId);
   if (existing) {
     try {
@@ -60,7 +78,16 @@ export async function handleCreateTicket(
 
   const typeLabel: Record<string, string> = { marketplace: 'Marketplace', moderation: 'Moderation', support: 'Support' };
 
+  // Ping admin role if this ticket came from the appeals server (support type from a banned user)
+  let pingContent: string | undefined;
+  try {
+    const mainGuild = await ticketClient.guilds.fetch(config.servers.main);
+    const ban = await mainGuild.bans.fetch(userId).catch(() => null);
+    if (ban) pingContent = `<@&${config.roles.staff.admin}> Appeal ticket opened by a banned user.`;
+  } catch { /* ignore */ }
+
   await channel.send({
+    content: pingContent,
     embeds: [new EmbedBuilder()
       .setColor(config.colours.system)
       .setTitle(`${typeLabel[ticketType]} Ticket | ${ticket.ticket_id}`)

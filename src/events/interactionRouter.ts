@@ -17,7 +17,8 @@ import {
 } from '../systems/ticketSystem.js';
 import {
   handleWarnModal, handleMuteModal, handleKickModal, handleBanModal,
-  handleNoteModal, handleUnmuteModal, handleUnbanModal
+  handleNoteModal, handleUnmuteModal, handleUnbanModal,
+  handleBanConfirm, handleBanCancel
 } from '../systems/moderationSystem.js';
 import {
   handleGetSellerButton, handleGetSellerModal, handleGrantSeller, handleDenySeller
@@ -65,6 +66,10 @@ export async function routeInteraction(interaction: Interaction, client: Client)
 
 async function routeButton(interaction: ButtonInteraction, client: Client): Promise<void> {
   const id = interaction.customId;
+
+  // Ban confirmation buttons
+  if (id.startsWith('ban_confirm_')) return handleBanConfirm(interaction, id.replace('ban_confirm_', ''));
+  if (id.startsWith('ban_cancel_'))  return handleBanCancel(interaction, id.replace('ban_cancel_', ''));
 
   // Review actions
   if (id.startsWith('review_approve_')) return handleReviewApprove(interaction, id.replace('review_approve_', ''));

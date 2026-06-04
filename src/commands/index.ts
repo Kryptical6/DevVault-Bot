@@ -10,7 +10,8 @@ import { addMpNote, getMpNotes, upsertUser, updateUserMpMute, getActiveModEntrie
 import { buildInfoEmbed, buildSuccessEmbed, buildErrorEmbed } from '../utils/embeds.js';
 import {
   handleWarn, handleMute, handleKick, handleBan, handleNote,
-  handleUnmute, handleUnban, handleModLogs, handleMyLogs
+  handleUnmute, handleUnban, handleModLogs, handleMyLogs,
+  handleBanConfirm, handleBanCancel
 } from '../systems/moderationSystem.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,6 +69,11 @@ const mainServerCommands = [
   // Admin
   new SlashCommandBuilder().setName('grant-trusted-seller').setDescription('Grant Trusted Seller role to a user')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)),
+  new SlashCommandBuilder().setName('remove-trusted-seller').setDescription('Remove Trusted Seller role from a user')
+    .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason for removal').setRequired(true)),
+  new SlashCommandBuilder().setName('remove-featured').setDescription('Remove the currently active featured listing')
+    .addStringOption(o => o.setName('post_id').setDescription('Post ID of the featured listing to remove').setRequired(true)),
   new SlashCommandBuilder().setName('embed').setDescription('Send a custom embed to a channel (Admin only)'),
   new SlashCommandBuilder().setName('get-delivery').setDescription('Retrieve the private delivery link for an asset post (Admin only, logged)')
     .addStringOption(o => o.setName('post_id').setDescription('Asset post ID e.g. ASSET-0001').setRequired(true)),
@@ -109,6 +115,11 @@ const staffServerCommands = [
     .addUserOption(o => o.setName('user').setDescription('Select a user to pick from their posts').setRequired(false)),
   new SlashCommandBuilder().setName('grant-trusted-seller').setDescription('Grant Trusted Seller role to a user')
     .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true)),
+  new SlashCommandBuilder().setName('remove-trusted-seller').setDescription('Remove Trusted Seller role from a user')
+    .addUserOption(o => o.setName('user').setDescription('Target user').setRequired(true))
+    .addStringOption(o => o.setName('reason').setDescription('Reason for removal').setRequired(true)),
+  new SlashCommandBuilder().setName('remove-featured').setDescription('Remove the currently active featured listing')
+    .addStringOption(o => o.setName('post_id').setDescription('Post ID of the featured listing to remove').setRequired(true)),
   new SlashCommandBuilder().setName('embed').setDescription('Send a custom embed to a channel (Admin only)'),
   new SlashCommandBuilder().setName('get-delivery').setDescription('Retrieve the private delivery link for an asset post (Admin only, logged)')
     .addStringOption(o => o.setName('post_id').setDescription('Asset post ID e.g. ASSET-0001').setRequired(true)),
@@ -305,16 +316,18 @@ export async function handleCommand(interaction: ChatInputCommandInteraction, cl
   }
 
   // Admin commands
-  if (['grant-trusted-seller', 'audit-log', 'embed', 'get-delivery'].includes(cmd)) {
+  if (['grant-trusted-seller', 'remove-trusted-seller', 'remove-featured', 'audit-log', 'embed', 'get-delivery'].includes(cmd)) {
     if (!isAdmin(member)) {
       await interaction.reply({ embeds: [buildErrorEmbed('No Permission', 'This command requires Admin.')], ephemeral: true });
       return;
     }
     switch (cmd) {
-      case 'grant-trusted-seller': await handleGrantTrustedSeller(interaction);      break;
-      case 'audit-log':            await handleAuditLog(interaction);                break;
-      case 'embed':                await handleEmbed(interaction, client);           break;
-      case 'get-delivery':         await handleGetDelivery(interaction);             break;
+      case 'grant-trusted-seller':  await handleGrantTrustedSeller(interaction);        break;
+      case 'remove-trusted-seller': await handleRemoveTrustedSeller(interaction, client); break;
+      case 'remove-featured':       await handleRemoveFeatured(interaction, client);     break;
+      case 'audit-log':             await handleAuditLog(interaction);                  break;
+      case 'embed':                 await handleEmbed(interaction, client);             break;
+      case 'get-delivery':          await handleGetDelivery(interaction);               break;
     }
     return;
   }
@@ -669,6 +682,78 @@ export async function handleEmbedContent(message: import('discord.js').Message, 
   } catch (e) {
     await message.reply({ embeds: [buildErrorEmbed('Failed', `Could not send embed: ${(e as Error).message}`)] });
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /remove-trusted-seller
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function handleRemoveTrustedSeller(interaction: ChatInputCommandInteraction, client: Client): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const target = interaction.options.getMember('user') as GuildMember | null;
+  const reason = interaction.options.getString('reason', true);
+  if (!target) { await interaction.editReply({ embeds: [buildErrorEmbed('Error', 'User not found.')] }); return; }
+
+  if (!target.roles.cache.has(config.roles.main.trustedSeller)) {
+    await interaction.editReply({ embeds: [buildErrorEmbed('Not a Trusted Seller', `<@${target.id}> does not have the Trusted Seller role.`)] });
+    return;
+  }
+
+  await target.roles.remove(config.roles.main.trustedSeller);
+
+  try {
+    await target.user.send({
+      embeds: [buildErrorEmbed('Trusted Seller Removed', `Your Trusted Seller role on DevVault has been removed.\n\n**Reason:** ${reason}`)],
+    });
+  } catch { /* DMs off */ }
+
+  const { logMod } = await import('../utils/logger.js');
+  await logMod({ action: 'Trusted Seller Removed', targetId: target.id, targetTag: target.user.tag, moderatorId: interaction.user.id, reason });
+  await interaction.editReply({ embeds: [buildSuccessEmbed('Removed', `Trusted Seller role removed from <@${target.id}>.`)] });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /remove-featured
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function handleRemoveFeatured(interaction: ChatInputCommandInteraction, client: Client): Promise<void> {
+  await interaction.deferReply({ ephemeral: true });
+  const postId = interaction.options.getString('post_id', true).toUpperCase();
+
+  const { getActiveFeatured, markFeaturedDone, getPost } = await import('../db/helpers.js');
+  const { logPost } = await import('../utils/logger.js');
+
+  const active = await getActiveFeatured();
+  if (!active) {
+    await interaction.editReply({ embeds: [buildErrorEmbed('Nothing Active', 'There is no active featured listing right now.')] });
+    return;
+  }
+  if (active.post_id !== postId) {
+    await interaction.editReply({ embeds: [buildErrorEmbed('Mismatch', `The active featured listing is **${active.post_id}**, not ${postId}.`)] });
+    return;
+  }
+
+  // Delete the public featured message
+  try {
+    const ch  = await client.channels.fetch(config.channels.main.featured) as import('discord.js').TextChannel;
+    const msg = await ch.messages.fetch(active.featured_message_id);
+    await msg.delete();
+  } catch { /* already gone */ }
+
+  await markFeaturedDone(active.id);
+
+  const post = await getPost(postId);
+  if (post) {
+    try {
+      const seller = await client.users.fetch(post.user_id);
+      await seller.send({
+        embeds: [buildErrorEmbed('Featured Listing Removed', `Your featured listing for **${post.title}** has been removed by Admin.\n\n-# ${post.post_id}`)],
+      });
+    } catch { /* DMs off */ }
+  }
+
+  await logPost({ action: 'Featured Removed by Admin', postId, userId: post?.user_id ?? 'unknown', username: post?.user_id ?? 'unknown', actionedBy: interaction.user.id });
+  await interaction.editReply({ embeds: [buildSuccessEmbed('Removed', `Featured listing for ${postId} has been removed.`)] });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
