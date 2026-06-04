@@ -231,8 +231,7 @@ async function routeModal(interaction: ModalSubmitInteraction, client: Client): 
     return handleModerateModal(interaction, targetId, encodedReason);
   }
 
-  // Purchase proof modal
-  if (id.startsWith('purchase_proof_modal_')) return handlePurchaseProofModal(interaction, id.replace('purchase_proof_modal_', ''));
+  // Purchase proof modal (legacy handler removed, now handled via DM)
 
   // Get-seller modal
   if (id.startsWith('get_seller_modal_')) return handleGetSellerModal(interaction, id.replace('get_seller_modal_', ''));

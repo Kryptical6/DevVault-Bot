@@ -435,7 +435,7 @@ export async function handleProofDm(message: Message): Promise<boolean> {
   if (reviewClient) {
     try {
       const thread = await reviewClient.channels.fetch(req.thread_id ?? '');
-      if (thread && 'send' in thread) {
+      if (thread && thread.isThread()) {
         const tc = thread as import('discord.js').ThreadChannel;
         await tc.setLocked(false);
         await tc.send({
